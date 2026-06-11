@@ -47,6 +47,13 @@ desktop.ini
 # ── Claude local memory (never push) ──────────────────
 .claude/
 
+# ── Frontend lives in its own repo (festnest-react.git → Vercel) ──
+# Kept nested locally for convenience but not tracked by the backend repo.
+/festnest-react/
+
+# ── Local git backups (never push) ────────────────────
+/_gitbackup/
+
 # ── Service account / private keys ────────────────────
 *.pem
 *.key
