@@ -481,10 +481,6 @@ export default function AuthOverlay() {
                   <p className="text-[14px] text-[#8A8A85] leading-relaxed mb-2">
                     We sent a 6-digit code to <strong className="text-[#111110]">{email.trim()}</strong>
                   </p>
-                  <p className="text-[12px] text-[#8A8A85] mb-6">
-                    ⚡ No SMTP configured? Check the backend terminal — the OTP is printed there.
-                  </p>
-
                   {/* OTP boxes */}
                   <div className="flex gap-2 justify-center mb-5" onPaste={handleOtpPaste}>
                     {otpDigits.map((d, i) => (
