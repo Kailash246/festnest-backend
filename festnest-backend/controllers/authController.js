@@ -3,7 +3,7 @@ import User          from '../models/User.js';
 import OTP           from '../models/OTP.js';
 import RefreshToken  from '../models/RefreshToken.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, refreshTokenExpiry } from '../utils/jwt.js';
-import { sendOTPEmail }    from '../utils/email.js';
+import { sendOTPEmail, sendPasswordResetEmail } from '../utils/email.js';
 import { ok, created, fail, unauthorized, asyncHandler } from '../utils/response.js';
 
 /* ── helpers ── */
@@ -192,17 +192,29 @@ export const logoutAll = asyncHandler(async (req, res) => {
 ──────────────────────────────────────────────────────── */
 export const forgotPassword = asyncHandler(async (req, res) => {
   const { email } = req.body;
-  if (!email) return fail(res, 'Email is required');
+  // Neutral response — identical whether or not the email is registered
+  const RESET_MSG = 'If this email is registered you will receive a reset code.';
 
-  const user = await User.findOne({ email: email.toLowerCase() });
-  // Always return 200 to avoid enumeration
-  if (!user) return ok(res, {}, 'If that email exists, an OTP has been sent');
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    return fail(res, 'Please enter a valid email address');
 
-  const code = await OTP.createOTP(email.toLowerCase(), 'reset_password');
-  await sendOTPEmail(email.toLowerCase(), code, 'reset_password');
+  const lower = email.toLowerCase();
+  const user  = await User.findOne({ email: lower });
 
-  const devData = process.env.NODE_ENV === 'development' ? { otp: code } : {};
-  return ok(res, devData, 'Password reset OTP sent');
+  // Never reveal whether the account exists (anti-enumeration)
+  if (!user) return ok(res, {}, RESET_MSG);
+
+  const code = await OTP.createOTP(lower, 'reset_password');
+  console.log('RESET OTP for', lower, ':', code);
+
+  // Fire-and-forget — email delivery must never block or fail the request
+  sendPasswordResetEmail(lower, code).catch(err =>
+    console.error('[RESET EMAIL]', err.message)
+  );
+
+  // Surface the OTP in non-production so the flow is testable without a mailbox
+  const devData = process.env.NODE_ENV !== 'production' ? { otp: code } : {};
+  return ok(res, devData, RESET_MSG);
 });
 
 /* ────────────────────────────────────────────────────────
@@ -211,23 +223,24 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 ──────────────────────────────────────────────────────── */
 export const resetPassword = asyncHandler(async (req, res) => {
   const { email, otp, newPassword } = req.body;
-  if (!email || !otp || !newPassword) return fail(res, 'email, otp and newPassword required');
+  if (!email || !otp || !newPassword) return fail(res, 'email, otp and newPassword are required');
   if (newPassword.length < 8) return fail(res, 'Password must be at least 8 characters');
 
   const lower = email.toLowerCase();
   const valid = await OTP.verifyOTP(lower, otp, 'reset_password');
-  if (!valid) return fail(res, 'This OTP has expired or is invalid. Please request a new one.');
+  if (!valid) return fail(res, 'Invalid or expired reset code. Please request a new one.');
 
   const user = await User.findOne({ email: lower }).select('+password');
   if (!user) return fail(res, "We couldn't find an account with that email.", 404);
 
-  user.password = newPassword;
+  user.password = newPassword;     // re-hashed by the User pre-save hook
   await user.save();
 
-  // Revoke all refresh tokens (force re-login everywhere)
+  // Delete used reset OTPs and revoke all sessions (force re-login everywhere)
+  await OTP.deleteMany({ email: lower, purpose: 'reset_password' });
   await RefreshToken.deleteMany({ user: user._id });
 
-  return ok(res, {}, 'Password reset successfully. Please log in again.');
+  return ok(res, {}, 'Password reset successfully. You can now log in.');
 });
 
 /* ────────────────────────────────────────────────────────

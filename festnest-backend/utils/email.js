@@ -134,6 +134,56 @@ export async function sendOTPEmail(email, otp, purpose = 'verify_email') {
   return sendMail({ to: email, subject: subjects[purpose] || 'FestNest OTP', html });
 }
 
+/* ── Password Reset OTP Email (dedicated template) ── */
+export async function sendPasswordResetEmail(email, otp) {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:'DM Sans',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0;">
+    <tr><td align="center">
+      <table width="480" cellpadding="0" cellspacing="0"
+             style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#4F46E5,#7C3AED);padding:32px;text-align:center;">
+            <div style="font-size:36px;margin-bottom:8px;">🔒</div>
+            <div style="color:#ffffff;font-size:22px;font-weight:700;">FestNest</div>
+            <div style="color:#C7D2FE;font-size:13px;margin-top:4px;">Password Reset Request</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:40px 36px;">
+            <p style="margin:0 0 8px;font-size:15px;color:#374151;">Hi there 👋</p>
+            <p style="margin:0 0 28px;font-size:15px;color:#374151;line-height:1.6;">
+              We received a request to reset your FestNest password. Use the code below to continue.
+            </p>
+            <div style="background:#F0F0FF;border:2px dashed #4F46E5;border-radius:12px;padding:24px;text-align:center;margin-bottom:28px;">
+              <div style="font-size:42px;font-weight:800;letter-spacing:10px;color:#4F46E5;font-family:monospace;">${otp}</div>
+            </div>
+            <p style="margin:0 0 8px;font-size:13px;color:#6B7280;">
+              ⏱️ <strong>Expires in 10 minutes.</strong> If you did not request this, ignore this email.
+            </p>
+            <p style="margin:0;font-size:13px;color:#6B7280;">
+              🔐 Never share this code. FestNest will never ask for it.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#F9FAFB;padding:20px 36px;border-top:1px solid #E5E7EB;text-align:center;">
+            <p style="margin:0 0 4px;font-size:12px;color:#6B7280;font-weight:600;">festnest.in</p>
+            <p style="margin:0;font-size:12px;color:#9CA3AF;">© ${new Date().getFullYear()} FestNest · Built for college students across India</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return sendMail({ to: email, subject: 'Reset your FestNest password', html });
+}
+
 /* ── Registration confirmation email ── */
 export async function sendRegistrationConfirmEmail(email, userName, eventName, eventCollege) {
   const html = `
