@@ -2,7 +2,7 @@
 import Event        from '../models/Event.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
 import User         from '../models/User.js';
-import { cloudinary } from '../config/cloudinary.js';
+import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
 import { sendRegistrationConfirmEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
@@ -222,17 +222,21 @@ export const hostEvent = asyncHandler(async (req, res) => {
   if (!eventName || !college || !eventType || !startDate || !city)
     return fail(res, 'eventName, college, eventType, startDate and city are required');
 
-  // Support both single file (req.file) and multi-field uploads (req.files)
-  const files      = req.files || {};
-  const bannerFile = req.file || files.bannerImage?.[0];
+  const files        = req.files || {};
+  const bannerFile   = req.file || files.bannerImage?.[0];
   const brochureFile = files.brochure?.[0];
 
-  const bannerImage = bannerFile
-    ? { url: bannerFile.path, publicId: bannerFile.filename }
+  const [bannerResult, brochureResult] = await Promise.all([
+    bannerFile   ? uploadEventBanner(bannerFile.buffer)  : null,
+    brochureFile ? uploadBrochure(brochureFile.buffer)   : null,
+  ]);
+
+  const bannerImage = bannerResult
+    ? { url: bannerResult.secure_url, publicId: bannerResult.public_id }
     : { url: '', publicId: '' };
 
-  const brochure = brochureFile
-    ? { url: brochureFile.path, publicId: brochureFile.filename }
+  const brochure = brochureResult
+    ? { url: brochureResult.secure_url, publicId: brochureResult.public_id }
     : { url: '', publicId: '' };
 
   const hosted = await HostedEvent.create({

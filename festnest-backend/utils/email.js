@@ -1,11 +1,13 @@
-// utils/email.js  –  Nodemailer transporter + OTP email templates
+// utils/email.js  –  Email sending via Resend (production) or Nodemailer (local dev)
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-/* ── Detect whether SMTP is genuinely configured ── */
-const PLACEHOLDER_VALUES = [
-  'your@gmail.com', 'your_16_char_app_password', 'your_app_password',
-  '', undefined, null,
-];
+const PLACEHOLDER_VALUES = ['your@gmail.com', 'your_16_char_app_password', '', undefined, null];
+
+function isResendConfigured() {
+  const key = process.env.RESEND_API_KEY;
+  return key && !PLACEHOLDER_VALUES.includes(key) && key.startsWith('re_');
+}
 
 function isSmtpConfigured() {
   const user = process.env.SMTP_USER;
@@ -13,7 +15,13 @@ function isSmtpConfigured() {
   return !PLACEHOLDER_VALUES.includes(user) && !PLACEHOLDER_VALUES.includes(pass);
 }
 
+let _resend     = null;
 let _transporter = null;
+
+function getResend() {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
+}
 
 function getTransporter() {
   if (_transporter) return _transporter;
@@ -21,37 +29,48 @@ function getTransporter() {
     host:   process.env.SMTP_HOST || 'smtp.gmail.com',
     port:   Number(process.env.SMTP_PORT) || 587,
     secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
   return _transporter;
 }
 
 /* ── Generic send helper ── */
 export async function sendMail({ to, subject, html }) {
-  if (!isSmtpConfigured()) {
-    // Dev / unconfigured — log to console only, never throw
-    console.log(`\n📧  [DEV EMAIL — SMTP not configured]`);
-    console.log(`  To:      ${to}`);
-    console.log(`  Subject: ${subject}\n`);
-    return { messageId: 'dev-no-smtp' };
+  // 1. Resend API (works on Render — uses HTTPS, not SMTP)
+  if (isResendConfigured()) {
+    try {
+      const from = process.env.MAIL_FROM || 'FestNest <onboarding@resend.dev>';
+      const result = await getResend().emails.send({ from, to, subject, html });
+      if (result.error) throw new Error(result.error.message);
+      console.log(`[EMAIL] Sent via Resend to ${to} — id: ${result.data?.id}`);
+      return result;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] Resend failed: ${err.message}`);
+      return { error: err.message };
+    }
   }
 
-  try {
-    const transporter = getTransporter();
-    return await transporter.sendMail({
-      from: process.env.MAIL_FROM || '"FestNest 🪺" <noreply@festnest.in>',
-      to,
-      subject,
-      html,
-    });
-  } catch (err) {
-    // Log but never crash the caller — OTP is already saved in DB
-    console.error(`[EMAIL ERROR] Failed to send to ${to}:`, err.message);
-    return { messageId: 'send-failed', error: err.message };
+  // 2. Nodemailer SMTP (local dev only — blocked by most cloud hosts)
+  if (isSmtpConfigured()) {
+    try {
+      const transporter = getTransporter();
+      const info = await transporter.sendMail({
+        from: process.env.MAIL_FROM || '"FestNest" <noreply@festnest.in>',
+        to, subject, html,
+      });
+      console.log(`[EMAIL] Sent via SMTP to ${to}`);
+      return info;
+    } catch (err) {
+      console.error(`[EMAIL ERROR] SMTP failed: ${err.message}`);
+      return { error: err.message };
+    }
   }
+
+  // 3. Dev fallback — no credentials configured
+  console.log(`\n📧  [DEV EMAIL — no mailer configured]`);
+  console.log(`  To:      ${to}`);
+  console.log(`  Subject: ${subject}\n`);
+  return { messageId: 'dev-no-mailer' };
 }
 
 /* ── OTP Email Template ── */

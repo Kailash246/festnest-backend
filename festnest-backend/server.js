@@ -24,10 +24,13 @@ await connectDB();
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+/* ── Trust Render / proxy headers (required for rate-limit + correct IP) ── */
+app.set('trust proxy', 1);
+
 /* ── Security ── */
 app.use(helmet());
 app.use(cors({
-  origin:      process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  origin:      process.env.CLIENT_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   credentials: true,
 }));
 
@@ -60,6 +63,9 @@ app.use('/api/auth/forgot-password', authLimiter);
 app.get('/health', (_req, res) =>
   res.json({ status: 'ok', env: process.env.NODE_ENV, ts: new Date().toISOString() })
 );
+app.get('/api/health', (_req, res) =>
+  res.json({ success: true, status: 'ok', timestamp: new Date() })
+);
 
 /* ── API routes ── */
 app.use('/api/auth',          authRoutes);
@@ -77,7 +83,12 @@ app.use(errorHandler);
 
 app.listen(PORT, () => {
   console.log(`\n🪺  FestNest API  →  http://localhost:${PORT}`);
-  console.log(`   ENV: ${process.env.NODE_ENV || 'development'}\n`);
+  console.log(`   ENV: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`   SMTP_USER:  ${process.env.SMTP_USER  || '⚠️  NOT SET'}`);
+  console.log(`   SMTP_HOST:  ${process.env.SMTP_HOST  || 'smtp.gmail.com (default)'}`);
+  console.log(`   SMTP_PORT:  ${process.env.SMTP_PORT  || '587 (default)'}`);
+  console.log(`   SMTP_SECURE:${process.env.SMTP_SECURE || 'false (default)'}`);
+  console.log(`   SMTP_PASS:  ${process.env.SMTP_PASS ? '✅ set' : '⚠️  NOT SET'}\n`);
 });
 
 export default app;

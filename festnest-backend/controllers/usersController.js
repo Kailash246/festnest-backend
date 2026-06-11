@@ -2,7 +2,7 @@
 // controllers/usersController.js
 import User     from '../models/User.js';
 import { SavedEvent, Registration, PointsLog, HostedEvent } from '../models/index.js';
-import { cloudinary } from '../config/cloudinary.js';
+import { cloudinary, uploadUserAvatar } from '../config/cloudinary.js';
 import { ok, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
 export const getMe = asyncHandler(async (req, res) => {
@@ -36,9 +36,11 @@ export const uploadAvatar = asyncHandler(async (req, res) => {
     await cloudinary.uploader.destroy(req.user.avatar.publicId).catch(() => {});
   }
 
+  const result = await uploadUserAvatar(req.file.buffer);
+
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    { 'avatar.url': req.file.path, 'avatar.publicId': req.file.filename },
+    { 'avatar.url': result.secure_url, 'avatar.publicId': result.public_id },
     { new: true }
   );
   return ok(res, { avatar: user.avatar }, 'Avatar updated');

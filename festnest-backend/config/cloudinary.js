@@ -1,7 +1,8 @@
 // config/cloudinary.js
+// Uses cloudinary v2 directly — no multer-storage-cloudinary needed.
 import { v2 as cloudinary } from 'cloudinary';
-import { CloudinaryStorage } from 'multer-storage-cloudinary';
 import multer from 'multer';
+import { Readable } from 'stream';
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -9,59 +10,59 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-/* ── Event banner + brochure (shared storage, params differ by fieldname) ── */
-const eventFilesStorage = new CloudinaryStorage({
-  cloudinary,
-  params: async (_req, file) => {
-    if (file.fieldname === 'brochure') {
-      return {
-        folder:        'festnest/brochures',
-        resource_type: 'raw',          // required for non-image files
-        format:        'pdf',
-        allowed_formats: ['pdf'],
-      };
-    }
-    // bannerImage — pre-cropped 16:9 JPEG from the frontend cropper
-    return {
-      folder:          'festnest/events',
-      allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-      transformation:  [{ width: 1280, height: 720, crop: 'fill', quality: 'auto' }],
-    };
+/* ── Upload a buffer to Cloudinary ── */
+export function uploadToCloudinary(buffer, options = {}) {
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(options, (err, result) => {
+      if (err) return reject(err);
+      resolve(result);
+    });
+    Readable.from(buffer).pipe(uploadStream);
+  });
+}
+
+/* ── Multer: memory storage (we upload manually after) ── */
+export const memoryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/jpeg','image/png','image/webp','image/jpg','application/pdf'];
+    cb(null, allowed.includes(file.mimetype));
   },
 });
 
-export const uploadEventFiles = multer({
-  storage: eventFilesStorage,
-  limits:  { fileSize: 25 * 1024 * 1024 }, // 25 MB covers both images and PDFs
-  fileFilter: (_req, file, cb) => {
-    const allowed =
-      file.fieldname === 'brochure'
-        ? ['application/pdf']
-        : ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    cb(null, allowed.includes(file.mimetype));
-  },
-}).fields([
+/* ── Named multer middleware ── */
+export const uploadEventImage  = memoryUpload.single('bannerImage');
+export const uploadEventFiles  = memoryUpload.fields([
   { name: 'bannerImage', maxCount: 1 },
   { name: 'brochure',    maxCount: 1 },
 ]);
+export const uploadAvatar = memoryUpload.single('avatar');
 
-/* ── User avatar uploads ── */
-export const avatarStorage = new CloudinaryStorage({
-  cloudinary,
-  params: {
-    folder:          'festnest/avatars',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
-    transformation:  [{ width: 300, height: 300, crop: 'fill', gravity: 'face', quality: 'auto' }],
-  },
-});
+/* ── Upload helpers (call these with req.file.buffer) ── */
+export async function uploadEventBanner(buffer) {
+  return uploadToCloudinary(buffer, {
+    folder:         'festnest/events',
+    allowed_formats: ['jpg','jpeg','png','webp'],
+    transformation: [{ width: 1200, height: 630, crop: 'fill', quality: 'auto' }],
+  });
+}
 
-export const uploadAvatar = multer({
-  storage: avatarStorage,
-  limits:  { fileSize: 2 * 1024 * 1024 },
-});
+export async function uploadUserAvatar(buffer) {
+  return uploadToCloudinary(buffer, {
+    folder:         'festnest/avatars',
+    allowed_formats: ['jpg','jpeg','png','webp'],
+    transformation: [{ width: 300, height: 300, crop: 'fill', gravity: 'face', quality: 'auto' }],
+  });
+}
 
-// Keep the old name as an alias so any other code that imports it doesn't break
-export const uploadEventImage = uploadEventFiles;
+export async function uploadBrochure(buffer) {
+  return uploadToCloudinary(buffer, {
+    folder:        'festnest/brochures',
+    resource_type: 'raw',
+    allowed_formats: ['pdf'],
+  });
+}
 
 export { cloudinary };
 export default cloudinary;

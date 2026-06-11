@@ -11,7 +11,7 @@ const router = Router();
 
 router.get('/me',                requireAuth, getMe);
 router.patch('/me',              requireAuth, updateMe);
-router.post('/me/avatar',        requireAuth, uploadAvatarStorage.single('avatar'), uploadAvatar);
+router.post('/me/avatar',        requireAuth, uploadAvatarStorage, uploadAvatar);
 router.patch('/me/password',     requireAuth, changePassword);
 router.get('/me/registrations',  requireAuth, myRegistrations);
 router.get('/me/points',         requireAuth, myPoints);
