@@ -82,13 +82,11 @@ app.use(notFound);
 app.use(errorHandler);
 
 app.listen(PORT, () => {
+  const resendKey = process.env.RESEND_API_KEY;
   console.log(`\n🪺  FestNest API  →  http://localhost:${PORT}`);
-  console.log(`   ENV: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   SMTP_USER:  ${process.env.SMTP_USER  || '⚠️  NOT SET'}`);
-  console.log(`   SMTP_HOST:  ${process.env.SMTP_HOST  || 'smtp.gmail.com (default)'}`);
-  console.log(`   SMTP_PORT:  ${process.env.SMTP_PORT  || '587 (default)'}`);
-  console.log(`   SMTP_SECURE:${process.env.SMTP_SECURE || 'false (default)'}`);
-  console.log(`   SMTP_PASS:  ${process.env.SMTP_PASS ? '✅ set' : '⚠️  NOT SET'}\n`);
+  console.log(`   ENV:            ${process.env.NODE_ENV || 'development'}`);
+  console.log(`   RESEND_API_KEY: ${resendKey ? '✅ set (' + resendKey.slice(0, 8) + '...)' : '⚠️  NOT SET'}`);
+  console.log(`   MAIL_FROM:      ${process.env.MAIL_FROM || '(default)'}\n`);
 });
 
 export default app;
