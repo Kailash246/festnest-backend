@@ -75,8 +75,13 @@ export const register = asyncHandler(async (req, res) => {
   const valid = await OTP.verifyOTP(lower, otp, 'verify_email');
   if (!valid) return fail(res, 'OTP is invalid or expired');
 
-  if (await User.findOne({ email: lower }))
-    return fail(res, 'An account with this email already exists', 409);
+  const existing = await User.findOne({ email: lower });
+  if (existing) {
+    if (existing.isEmailVerified)
+      return fail(res, 'An account with this email already exists. Please log in instead.', 409);
+    // Unverified account — delete it and allow re-registration
+    await User.deleteOne({ _id: existing._id });
+  }
 
   const refCode = name.replace(/\s+/g, '').toUpperCase().slice(0, 5)
     + Math.floor(1000 + Math.random() * 9000);

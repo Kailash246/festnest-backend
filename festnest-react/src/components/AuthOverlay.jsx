@@ -215,9 +215,16 @@ export default function AuthOverlay() {
       goTo(5);  // profile setup
     } catch (e) {
       setOtpDigits(['','','','','','']);
-      setOtpError(e.message || 'Invalid OTP — please try again');
-      setTimeout(() => otpRefs.current[0]?.focus(), 100);
-      showToast(e.message || 'Invalid OTP — please try again', 'error');
+      const msg = e.message || 'Something went wrong — please try again';
+      const isDuplicate = e.status === 409 || msg.toLowerCase().includes('already exists');
+      if (isDuplicate) {
+        showToast('This email is already registered. Please log in instead.', 'error');
+        goTo('login');
+      } else {
+        setOtpError(msg);
+        showToast(msg, 'error');
+        setTimeout(() => otpRefs.current[0]?.focus(), 100);
+      }
     } finally {
       setLoading(false);
     }
