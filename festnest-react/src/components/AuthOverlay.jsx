@@ -92,6 +92,7 @@ export default function AuthOverlay() {
   const [otpDigits, setOtpDigits]   = useState(['','','','','','']);
   const [otpTimer,  setOtpTimer]    = useState(120);
   const [timerActive, setTimerActive] = useState(false);
+  const [otpError,  setOtpError]    = useState('');
   const otpRefs = useRef([]);
 
   /* ── Registration extra ── */
@@ -213,8 +214,8 @@ export default function AuthOverlay() {
       login(r.data.user);
       goTo(5);  // profile setup
     } catch (e) {
-      // Clear OTP on failure so user can re-enter
       setOtpDigits(['','','','','','']);
+      setOtpError(e.message || 'Invalid OTP — please try again');
       setTimeout(() => otpRefs.current[0]?.focus(), 100);
       showToast(e.message || 'Invalid OTP — please try again', 'error');
     } finally {
@@ -245,6 +246,7 @@ export default function AuthOverlay() {
   /* ─── Resend OTP ─── */
   const resendOtp = async () => {
     setLoading(true);
+    setOtpError('');
     try {
       const r = await authApi.sendOtp(email.trim(), 'verify_email');
       if (r.data?.otp) {
@@ -253,7 +255,7 @@ export default function AuthOverlay() {
         showToast(`Dev OTP: ${r.data.otp} (auto-filled)`, 'info');
       } else {
         setOtpDigits(['','','','','','']);
-        showToast('OTP resent ✓', 'success');
+        showToast('New OTP sent ✓ — use the latest email', 'success');
       }
       setOtpTimer(120);
       setTimerActive(true);
@@ -269,6 +271,7 @@ export default function AuthOverlay() {
     const next  = [...otpDigits];
     next[i]     = digit;
     setOtpDigits(next);
+    if (digit) setOtpError('');
     if (digit && i < 5) otpRefs.current[i + 1]?.focus();
   };
 
@@ -482,17 +485,21 @@ export default function AuthOverlay() {
                     We sent a 6-digit code to <strong className="text-[#111110]">{email.trim()}</strong>
                   </p>
                   {/* OTP boxes */}
-                  <div className="flex gap-2 justify-center mb-5" onPaste={handleOtpPaste}>
+                  <div className="flex gap-2 justify-center mb-3" onPaste={handleOtpPaste}>
                     {otpDigits.map((d, i) => (
                       <input key={i}
                         ref={el => otpRefs.current[i] = el}
-                        className={`otp-box ${d ? 'filled' : ''}`}
+                        className={`otp-box ${d ? 'filled' : ''} ${otpError ? 'border-red-400' : ''}`}
                         type="text" inputMode="numeric" maxLength={1} value={d}
                         onChange={e => handleOtpInput(i, e.target.value)}
                         onKeyDown={e => handleOtpKey(i, e)}
                         aria-label={`OTP digit ${i + 1}`} />
                     ))}
                   </div>
+
+                  {otpError && (
+                    <p className="text-center text-[13px] text-red-500 mb-3">{otpError}</p>
+                  )}
 
                   <p className="text-center text-[13px] text-[#8A8A85] mb-5">
                     {timerActive
