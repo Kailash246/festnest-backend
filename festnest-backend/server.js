@@ -45,14 +45,16 @@ app.use(rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders:   false,
-  message: { success: false, message: 'Too many requests — please try again in a few minutes.' },
+  message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
 }));
 
 /* ── Stricter limiter for auth endpoints ── */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  message: { success: false, message: 'Too many auth attempts — please try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
 });
 app.use('/api/auth/login',           authLimiter);
 app.use('/api/auth/register',        authLimiter);

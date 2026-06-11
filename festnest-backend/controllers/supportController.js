@@ -1,6 +1,6 @@
 // controllers/supportController.js
 import { SupportTicket } from '../models/index.js';
-import { ok, fail, created, asyncHandler } from '../utils/response.js';
+import { ok, fail, created, notFoundRes, asyncHandler } from '../utils/response.js';
 
 const FAQS = [
   { id: 'f1', category: 'registration', q: 'How do I register for an event?', a: "Tap any event card to open its detail page, then tap 'Register Now'. You need a FestNest account." },

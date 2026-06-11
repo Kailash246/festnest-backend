@@ -73,12 +73,12 @@ export const register = asyncHandler(async (req, res) => {
   const lower = email.toLowerCase();
 
   const valid = await OTP.verifyOTP(lower, otp, 'verify_email');
-  if (!valid) return fail(res, 'OTP is invalid or expired');
+  if (!valid) return fail(res, 'This OTP has expired or is invalid. Please request a new one.');
 
   const existing = await User.findOne({ email: lower });
   if (existing) {
     if (existing.isEmailVerified)
-      return fail(res, 'An account with this email already exists. Please log in instead.', 409);
+      return fail(res, 'This email is already registered. Please log in instead.', 409);
     // Unverified account — delete it and allow re-registration
     await User.deleteOne({ _id: existing._id });
   }
@@ -108,7 +108,7 @@ export const login = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
   if (!user || !(await user.comparePassword(password)))
-    return unauthorized(res, 'Invalid email or password');
+    return unauthorized(res, 'Incorrect email or password.');
 
   const tokens = await issueTokens(user, req);
   return ok(res, { user: user.toPublic(), ...tokens }, 'Login successful');
@@ -124,7 +124,7 @@ export const loginWithOtp = asyncHandler(async (req, res) => {
 
   const lower = email.toLowerCase();
   const valid = await OTP.verifyOTP(lower, otp, 'login');
-  if (!valid) return fail(res, 'OTP is invalid or expired');
+  if (!valid) return fail(res, 'This OTP has expired or is invalid. Please request a new one.');
 
   let user = await User.findOne({ email: lower });
   if (!user) {
@@ -216,10 +216,10 @@ export const resetPassword = asyncHandler(async (req, res) => {
 
   const lower = email.toLowerCase();
   const valid = await OTP.verifyOTP(lower, otp, 'reset_password');
-  if (!valid) return fail(res, 'OTP is invalid or expired');
+  if (!valid) return fail(res, 'This OTP has expired or is invalid. Please request a new one.');
 
   const user = await User.findOne({ email: lower }).select('+password');
-  if (!user) return fail(res, 'User not found', 404);
+  if (!user) return fail(res, "We couldn't find an account with that email.", 404);
 
   user.password = newPassword;
   await user.save();

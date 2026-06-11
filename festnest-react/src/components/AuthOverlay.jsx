@@ -41,6 +41,19 @@ const Divider = ({ text }) => (
 );
 
 const inputCls = `w-full px-4 py-3 border-[1.5px] border-[#CBCBC6] rounded-xl font-body text-[15px] text-[#111110] bg-white placeholder:text-[#AEAEAD] focus:border-primary focus:shadow-[0_0_0_3px_rgba(79,70,229,0.10)] transition-all duration-150 outline-none`;
+// Applied on top of inputCls when a field has a validation error.
+const inputErrCls = `border-red-500 focus:border-red-500 focus:shadow-[0_0_0_3px_rgba(220,38,38,0.10)]`;
+
+/* Small inline error message shown directly below a field. */
+const FieldError = ({ children }) =>
+  children ? (
+    <p className="flex items-center gap-1 text-[12px] text-red-500 mt-1.5">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 flex-shrink-0">
+        <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+      {children}
+    </p>
+  ) : null;
 
 const INTERESTS = [
   '💻 Hackathons','🎭 Cultural Fests','🛠️ Workshops','🏆 Competitions',
@@ -87,6 +100,10 @@ export default function AuthOverlay() {
   const [password, setPassword] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPw,    setLoginPw]    = useState('');
+
+  /* ── Inline field-level errors (keyed by field name) ── */
+  const [fieldErrors, setFieldErrors] = useState({});
+  const clearFieldError = (k) => setFieldErrors(prev => (prev[k] ? { ...prev, [k]: '' } : prev));
 
   /* ── OTP ── */
   const [otpDigits, setOtpDigits]   = useState(['','','','','','']);
@@ -168,13 +185,19 @@ export default function AuthOverlay() {
     const trimName  = name.trim();
     const trimEmail = email.trim();
 
-    if (!trimName)  return showToast('Please enter your name', 'error');
-    if (!trimEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimEmail))
-      return showToast('Please enter a valid email address', 'error');
-    if (password.length < 8)
-      return showToast('Password must be at least 8 characters', 'error');
-    if (!tosAgreed)
-      return showToast('Please agree to the Terms of Service', 'error');
+    const errs = {};
+    if (!trimName) errs.name = 'Please enter your name';
+    if (!trimEmail) errs.email = 'Please enter your email address';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimEmail)) errs.email = 'Please enter a valid email address';
+    if (!password) errs.password = 'Please create a password';
+    else if (password.length < 8) errs.password = 'Password must be at least 8 characters';
+    if (!tosAgreed) errs.tos = 'Please agree to the Terms of Service to continue';
+
+    if (Object.keys(errs).length) {
+      setFieldErrors(errs);
+      return showToast('Please fix the highlighted fields', 'error');
+    }
+    setFieldErrors({});
 
     setLoading(true);
     try {
@@ -233,8 +256,14 @@ export default function AuthOverlay() {
   /* ─── Login ─── */
   const handleLogin = async () => {
     const trimEmail = loginEmail.trim();
-    if (!trimEmail) return showToast('Please enter your email', 'error');
-    if (!loginPw)   return showToast('Please enter your password', 'error');
+    const errs = {};
+    if (!trimEmail) errs.loginEmail = 'Please enter your email';
+    if (!loginPw)   errs.loginPw = 'Please enter your password';
+    if (Object.keys(errs).length) {
+      setFieldErrors(errs);
+      return showToast('Please fix the highlighted fields', 'error');
+    }
+    setFieldErrors({});
 
     setLoading(true);
     try {
@@ -244,7 +273,10 @@ export default function AuthOverlay() {
       if (r.data.user.role === 'organizer') setRole('organizer');
       goTo(6);
     } catch (e) {
-      showToast(e.message || 'Invalid email or password', 'error');
+      const msg = e.message || 'Incorrect email or password.';
+      // 401 → highlight both credential fields inline
+      if (e.status === 401) setFieldErrors({ loginEmail: ' ', loginPw: msg });
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -363,17 +395,21 @@ export default function AuthOverlay() {
 
                   <div className="mb-4">
                     <label className="block text-[13px] font-semibold text-[#111110] mb-1.5">Email Address</label>
-                    <input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+                    <input type="email" value={loginEmail}
+                      onChange={e => { setLoginEmail(e.target.value); clearFieldError('loginEmail'); }}
                       placeholder="arjun@nsit.ac.in" autoComplete="email"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldErrors.loginEmail ? inputErrCls : ''}`}
                       onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+                    <FieldError>{fieldErrors.loginEmail?.trim()}</FieldError>
                   </div>
                   <div className="mb-4">
                     <label className="block text-[13px] font-semibold text-[#111110] mb-1.5">Password</label>
-                    <input type="password" value={loginPw} onChange={e => setLoginPw(e.target.value)}
+                    <input type="password" value={loginPw}
+                      onChange={e => { setLoginPw(e.target.value); clearFieldError('loginPw'); clearFieldError('loginEmail'); }}
                       placeholder="Your password" autoComplete="current-password"
-                      className={inputCls}
+                      className={`${inputCls} ${fieldErrors.loginPw ? inputErrCls : ''}`}
                       onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+                    <FieldError>{fieldErrors.loginPw?.trim()}</FieldError>
                   </div>
 
                   <AuthCta onClick={handleLogin} loading={loading}>
@@ -426,23 +462,29 @@ export default function AuthOverlay() {
 
                   <div className="mb-4">
                     <label className="block text-[13px] font-semibold text-[#111110] mb-1.5">Full Name</label>
-                    <input type="text" value={name} onChange={e => setName(e.target.value)}
-                      placeholder="Arjun Kumar" autoComplete="name" className={inputCls}
+                    <input type="text" value={name}
+                      onChange={e => { setName(e.target.value); clearFieldError('name'); }}
+                      placeholder="Arjun Kumar" autoComplete="name"
+                      className={`${inputCls} ${fieldErrors.name ? inputErrCls : ''}`}
                       onKeyDown={e => e.key === 'Enter' && document.getElementById('reg-email')?.focus()} />
+                    <FieldError>{fieldErrors.name}</FieldError>
                   </div>
                   <div className="mb-4">
                     <label className="block text-[13px] font-semibold text-[#111110] mb-1.5">Email Address</label>
-                    <input id="reg-email" type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      placeholder="arjun@nsit.ac.in" autoComplete="email" className={inputCls}
+                    <input id="reg-email" type="email" value={email}
+                      onChange={e => { setEmail(e.target.value); clearFieldError('email'); }}
+                      placeholder="arjun@nsit.ac.in" autoComplete="email"
+                      className={`${inputCls} ${fieldErrors.email ? inputErrCls : ''}`}
                       onKeyDown={e => e.key === 'Enter' && document.getElementById('reg-pw')?.focus()} />
+                    <FieldError>{fieldErrors.email}</FieldError>
                   </div>
                   <div className="mb-4">
                     <label className="block text-[13px] font-semibold text-[#111110] mb-1.5">Password</label>
                     <div className="relative">
                       <input id="reg-pw" type={pwVisible ? 'text' : 'password'} value={password}
-                        onChange={e => { setPassword(e.target.value); checkPw(e.target.value); }}
+                        onChange={e => { setPassword(e.target.value); checkPw(e.target.value); clearFieldError('password'); }}
                         placeholder="Min 8 characters" autoComplete="new-password"
-                        className={`${inputCls} pr-11`}
+                        className={`${inputCls} pr-11 ${fieldErrors.password ? inputErrCls : ''}`}
                         onKeyDown={e => e.key === 'Enter' && handleSignup()} />
                       <button type="button" onClick={() => setPwVisible(v => !v)}
                         className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#AEAEAD] hover:text-[#8A8A85]">
@@ -459,16 +501,20 @@ export default function AuthOverlay() {
                         </p>
                       </>
                     )}
+                    <FieldError>{fieldErrors.password}</FieldError>
                   </div>
 
                   {/* ToS */}
-                  <div className="flex items-start gap-2.5 mb-5 cursor-pointer" onClick={() => setTosAgreed(v => !v)}>
-                    <div className={`w-[18px] h-[18px] flex-shrink-0 mt-0.5 border-2 rounded flex items-center justify-center transition-all ${tosAgreed ? 'bg-primary border-primary' : 'border-[#CBCBC6]'}`}>
-                      {tosAgreed && <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="w-[11px] h-[11px]"><polyline points="20 6 9 17 4 12"/></svg>}
+                  <div className="mb-5">
+                    <div className="flex items-start gap-2.5 cursor-pointer" onClick={() => { setTosAgreed(v => !v); clearFieldError('tos'); }}>
+                      <div className={`w-[18px] h-[18px] flex-shrink-0 mt-0.5 border-2 rounded flex items-center justify-center transition-all ${tosAgreed ? 'bg-primary border-primary' : fieldErrors.tos ? 'border-red-500' : 'border-[#CBCBC6]'}`}>
+                        {tosAgreed && <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="w-[11px] h-[11px]"><polyline points="20 6 9 17 4 12"/></svg>}
+                      </div>
+                      <span className="text-[13px] text-[#4B4B47] leading-relaxed select-none">
+                        I agree to FestNest's <span className="text-primary font-medium">Terms of Service</span> and <span className="text-primary font-medium">Privacy Policy</span>
+                      </span>
                     </div>
-                    <span className="text-[13px] text-[#4B4B47] leading-relaxed select-none">
-                      I agree to FestNest's <span className="text-primary font-medium">Terms of Service</span> and <span className="text-primary font-medium">Privacy Policy</span>
-                    </span>
+                    <FieldError>{fieldErrors.tos}</FieldError>
                   </div>
 
                   <AuthCta onClick={handleSignup} loading={loading}>
