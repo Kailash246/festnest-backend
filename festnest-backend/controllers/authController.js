@@ -39,6 +39,15 @@ export const sendOtp = asyncHandler(async (req, res) => {
   if (!email) return fail(res, 'Email is required');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail(res, 'Invalid email address');
 
+  // For sign-up verification, reject up front if the email already belongs to an
+  // account — this lets the client surface the error on the signup step before an
+  // OTP is ever sent, instead of failing later at register().
+  if (purpose === 'verify_email') {
+    const existing = await User.findOne({ email: email.toLowerCase() }).lean();
+    if (existing)
+      return fail(res, 'This email is already registered. Please log in instead.', 409);
+  }
+
   const code = await OTP.createOTP(email.toLowerCase(), purpose);
 
   // Send email non-fatally — if SMTP not configured, sendOTPEmail logs to console
