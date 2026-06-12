@@ -29,8 +29,24 @@ app.set('trust proxy', 1);
 
 /* ── Security ── */
 app.use(helmet());
+/* ── CORS ── */
+// Allowed browser origins: production domains, Vercel deploy URL, local dev,
+// plus any extra origins from CLIENT_URL / CLIENT_ORIGIN (comma-separated).
+const allowedOrigins = [
+  'https://festnest.in',
+  'https://www.festnest.in',
+  'https://festnest-react.vercel.app',
+  'http://localhost:5173',
+  ...(process.env.CLIENT_URL    || '').split(',').map(s => s.trim()).filter(Boolean),
+  ...(process.env.CLIENT_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean),
+];
+
 app.use(cors({
-  origin:      process.env.CLIENT_URL || process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  origin(origin, callback) {
+    // Allow requests with no Origin (curl, server-to-server, health checks).
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(null, false); // deny without throwing a 500
+  },
   credentials: true,
 }));
 
