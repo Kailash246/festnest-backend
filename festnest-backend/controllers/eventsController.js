@@ -1,4 +1,5 @@
 // controllers/eventsController.js
+import mongoose     from 'mongoose';
 import Event        from '../models/Event.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
 import User         from '../models/User.js';
@@ -103,19 +104,34 @@ export const getEvent = asyncHandler(async (req, res) => {
   const isAdminPreview = req.user?.role === 'admin' || req.user?.role === 'superadmin';
 
   // Admins can view inactive events; regular users only see active ones
-  const filter = { slug: req.params.slug };
-  if (!isAdminPreview) filter.isActive = true;
+  const slugFilter = { slug: req.params.slug };
+  if (!isAdminPreview) slugFilter.isActive = true;
 
   // Only increment view count for public (non-admin) views
   let event;
   if (isAdminPreview) {
-    event = await Event.findOne(filter).lean();
+    event = await Event.findOne(slugFilter).lean();
   } else {
     event = await Event.findOneAndUpdate(
-      filter,
+      slugFilter,
       { $inc: { 'stats.viewCount': 1 } },
       { new: true }
     ).lean();
+  }
+
+  // Fallback: if no slug match and param looks like an ObjectId, try _id lookup
+  if (!event && mongoose.Types.ObjectId.isValid(req.params.slug)) {
+    const idFilter = { _id: req.params.slug };
+    if (!isAdminPreview) idFilter.isActive = true;
+    if (isAdminPreview) {
+      event = await Event.findOne(idFilter).lean();
+    } else {
+      event = await Event.findOneAndUpdate(
+        idFilter,
+        { $inc: { 'stats.viewCount': 1 } },
+        { new: true }
+      ).lean();
+    }
   }
 
   if (!event) return notFoundRes(res, 'Event not found');
