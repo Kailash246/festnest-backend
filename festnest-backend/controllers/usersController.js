@@ -14,15 +14,26 @@ export const getMe = asyncHandler(async (req, res) => {
 });
 
 export const updateMe = asyncHandler(async (req, res) => {
-  const { name, college, city, year, branch, interests, notificationPrefs } = req.body;
+  const {
+    name, college, city, year, branch, phone, interests, notificationPrefs,
+    bio, organization, designation, website, linkedin, instagram, github,
+  } = req.body;
   const updates = {};
-  if (name)              updates.name    = name;
-  if (college !== undefined) updates.college = college;
-  if (city    !== undefined) updates.city    = city;
-  if (year    !== undefined) updates.year    = year;
-  if (branch  !== undefined) updates.branch  = branch;
-  if (interests)         updates.interests = interests;
-  if (notificationPrefs) updates.notificationPrefs = notificationPrefs;
+  if (name              !== undefined) updates.name         = name;
+  if (college           !== undefined) updates.college      = college;
+  if (city              !== undefined) updates.city         = city;
+  if (year              !== undefined) updates.year         = year;
+  if (branch            !== undefined) updates.branch       = branch;
+  if (phone             !== undefined) updates.phone        = phone;
+  if (bio               !== undefined) updates.bio          = bio;
+  if (organization      !== undefined) updates.organization = organization;
+  if (designation       !== undefined) updates.designation  = designation;
+  if (website           !== undefined) updates.website      = website;
+  if (linkedin          !== undefined) updates.linkedin     = linkedin;
+  if (instagram         !== undefined) updates.instagram    = instagram;
+  if (github            !== undefined) updates.github       = github;
+  if (interests)                       updates.interests    = interests;
+  if (notificationPrefs)               updates.notificationPrefs = notificationPrefs;
 
   const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true });
   return ok(res, { user: user.toPublic() }, 'Profile updated');

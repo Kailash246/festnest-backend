@@ -18,6 +18,15 @@ const userSchema = new mongoose.Schema(
     city:    { type: String, default: '' },
     year:    { type: String, default: '' },
     branch:  { type: String, default: '' },
+    phone:   { type: String, default: '' },
+
+    bio:          { type: String, default: '', maxlength: 160 },
+    organization: { type: String, default: '' },
+    designation:  { type: String, default: '' },
+    website:      { type: String, default: '' },
+    linkedin:     { type: String, default: '' },
+    instagram:    { type: String, default: '' },
+    github:       { type: String, default: '' },
 
     interests: [{ type: String }],
 
