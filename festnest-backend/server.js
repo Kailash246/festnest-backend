@@ -27,6 +27,16 @@ const PORT = process.env.PORT || 5000;
 /* ── Trust Render / proxy headers (required for rate-limit + correct IP) ── */
 app.set('trust proxy', 1);
 
+/* ── HTTPS redirect (Render terminates TLS; x-forwarded-proto carries the original scheme) ── */
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, 'https://' + req.headers.host + req.url);
+    }
+    next();
+  });
+}
+
 /* ── Security ── */
 app.use(helmet());
 /* ── CORS ── */
@@ -48,12 +58,15 @@ app.use(cors({
     return callback(null, false); // deny without throwing a 500
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['X-Total-Count'],
 }));
 
 /* ── Logging & body parsing ── */
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 /* ── Global rate limiter ── */
 app.use(rateLimit({
