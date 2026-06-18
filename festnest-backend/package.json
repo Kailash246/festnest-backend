@@ -15,6 +15,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^7.3.1",
     "express-validator": "^7.1.0",
     "helmet": "^7.1.0",
@@ -23,7 +24,8 @@
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.13",
-    "resend": "^6.12.4"
+    "resend": "^6.12.4",
+    "sanitize-html": "^2.17.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

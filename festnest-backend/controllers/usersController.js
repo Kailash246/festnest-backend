@@ -1,9 +1,12 @@
 // controllers/usersController.js
-// controllers/usersController.js
+import sanitizeHtml from 'sanitize-html';
 import User     from '../models/User.js';
 import { SavedEvent, Registration, PointsLog, HostedEvent } from '../models/index.js';
 import { cloudinary, uploadUserAvatar } from '../config/cloudinary.js';
 import { ok, fail, notFoundRes, asyncHandler } from '../utils/response.js';
+
+const STRIP_ALL = { allowedTags: [], allowedAttributes: {} };
+const clean = str => (str ? sanitizeHtml(String(str), STRIP_ALL) : str);
 
 export const getMe = asyncHandler(async (req, res) => {
   const [savedCount, regCount] = await Promise.all([
@@ -19,15 +22,15 @@ export const updateMe = asyncHandler(async (req, res) => {
     bio, organization, designation, website, linkedin, instagram, github,
   } = req.body;
   const updates = {};
-  if (name              !== undefined) updates.name         = name;
-  if (college           !== undefined) updates.college      = college;
-  if (city              !== undefined) updates.city         = city;
+  if (name              !== undefined) updates.name         = clean(name);
+  if (college           !== undefined) updates.college      = clean(college);
+  if (city              !== undefined) updates.city         = clean(city);
   if (year              !== undefined) updates.year         = year;
-  if (branch            !== undefined) updates.branch       = branch;
+  if (branch            !== undefined) updates.branch       = clean(branch);
   if (phone             !== undefined) updates.phone        = phone;
-  if (bio               !== undefined) updates.bio          = bio;
-  if (organization      !== undefined) updates.organization = organization;
-  if (designation       !== undefined) updates.designation  = designation;
+  if (bio               !== undefined) updates.bio          = clean(bio);
+  if (organization      !== undefined) updates.organization = clean(organization);
+  if (designation       !== undefined) updates.designation  = clean(designation);
   if (website           !== undefined) updates.website      = website;
   if (linkedin          !== undefined) updates.linkedin     = linkedin;
   if (instagram         !== undefined) updates.instagram    = instagram;

@@ -1,6 +1,10 @@
 // controllers/supportController.js
+import sanitizeHtml from 'sanitize-html';
 import { SupportTicket } from '../models/index.js';
 import { ok, fail, created, notFoundRes, asyncHandler } from '../utils/response.js';
+
+const STRIP_ALL = { allowedTags: [], allowedAttributes: {} };
+const clean = str => (str ? sanitizeHtml(String(str), STRIP_ALL) : str);
 
 const FAQS = [
   { id: 'f1', category: 'registration', q: 'How do I register for an event?', a: "Tap any event card to open its detail page, then tap 'Register Now'. You need a FestNest account." },
@@ -24,7 +28,11 @@ export const submitTicket = asyncHandler(async (req, res) => {
   if (!name || !email || !issueType || !subject || !message)
     return fail(res, 'name, email, issueType, subject and message are required');
   if (message.length < 10) return fail(res, 'Message must be at least 10 characters');
-  const ticket = await SupportTicket.create({ user: req.user?._id || null, name, email, issueType, subject, message });
+  const ticket = await SupportTicket.create({
+    user: req.user?._id || null,
+    name: clean(name), email: email.toLowerCase().trim(),
+    issueType, subject: clean(subject), message: clean(message),
+  });
   return created(res, { ticket }, 'Message received. We will get back to you within 24 hours.');
 });
 
@@ -38,7 +46,7 @@ export const reopenTicket = asyncHandler(async (req, res) => {
   const updateOp = { $set: { status: 'open' } };
   if (message?.trim()) {
     updateOp.$push = {
-      replies: { author: 'user', authorId: req.user._id, name: req.user.name, message: message.trim() },
+      replies: { author: 'user', authorId: req.user._id, name: req.user.name, message: clean(message.trim()) },
     };
   }
   const ticket = await SupportTicket.findOneAndUpdate(
@@ -55,7 +63,7 @@ export const addReply = asyncHandler(async (req, res) => {
   if (!message?.trim()) return fail(res, 'Message is required');
   const ticket = await SupportTicket.findOneAndUpdate(
     { _id: req.params.id, user: req.user._id },
-    { $push: { replies: { author: 'user', authorId: req.user._id, name: req.user.name, message: message.trim() } } },
+    { $push: { replies: { author: 'user', authorId: req.user._id, name: req.user.name, message: clean(message.trim()) } } },
     { new: true }
   );
   if (!ticket) return notFoundRes(res, 'Ticket not found');

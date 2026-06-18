@@ -1,10 +1,11 @@
 // server.js – FestNest API entry point
 import 'dotenv/config';
-import express      from 'express';
-import cors         from 'cors';
-import helmet       from 'helmet';
-import morgan       from 'morgan';
-import rateLimit    from 'express-rate-limit';
+import express         from 'express';
+import cors            from 'cors';
+import helmet          from 'helmet';
+import morgan          from 'morgan';
+import rateLimit       from 'express-rate-limit';
+import mongoSanitize   from 'express-mongo-sanitize';
 
 import connectDB    from './config/db.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
@@ -37,8 +38,31 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-/* ── Security ── */
-app.use(helmet());
+/* ── Security headers (Helmet) ── */
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:     ["'self'"],
+      scriptSrc:      ["'self'", 'https://www.googletagmanager.com', 'https://www.google-analytics.com'],
+      styleSrc:       ["'self'", "'unsafe-inline'"],
+      imgSrc:         ["'self'", 'data:', 'https://res.cloudinary.com', 'https://www.google-analytics.com'],
+      connectSrc:     ["'self'", 'https://www.google-analytics.com'],
+      fontSrc:        ["'self'"],
+      objectSrc:      ["'none'"],
+      frameSrc:       ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri:        ["'self'"],
+      formAction:     ["'self'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  noSniff: true,
+  xssFilter: true,
+  frameguard: { action: 'deny' },
+  permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+}));
 /* ── CORS ── */
 // Allowed browser origins: production domains, Vercel deploy URL, local dev,
 // plus any extra origins from CLIENT_URL / CLIENT_ORIGIN (comma-separated).
@@ -67,6 +91,9 @@ app.use(cors({
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+/* ── NoSQL injection protection ── */
+app.use(mongoSanitize({ replaceWith: '_' }));
 
 /* ── Global rate limiter ── */
 app.use(rateLimit({

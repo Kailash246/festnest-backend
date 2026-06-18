@@ -7,6 +7,7 @@ import {
   getEvent, saveEvent, unsaveEvent,
   registerForEvent, cancelRegistration, hostEvent,
 } from '../controllers/eventsController.js';
+import { validate, validateHostEvent } from '../middleware/validate.js';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.delete('/:slug/save',    requireAuth, unsaveEvent);
 router.post('/:slug/register',  requireAuth, registerForEvent);
 router.delete('/:slug/register',requireAuth, cancelRegistration);
 
-// Host event — handles bannerImage (image) and brochure (PDF) in one middleware pass
-router.post('/host', requireAuth, uploadEventFiles, hostEvent);
+// Host event — multipart upload then validation (body fields come from FormData)
+router.post('/host', requireAuth, uploadEventFiles, ...validateHostEvent, validate, hostEvent);
 
 export default router;

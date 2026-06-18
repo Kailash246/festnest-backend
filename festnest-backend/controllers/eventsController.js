@@ -1,11 +1,16 @@
 // controllers/eventsController.js
 import mongoose     from 'mongoose';
+import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
 import { sendRegistrationConfirmEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
+
+// Strip all HTML tags — returns plain text safe for DB storage
+const STRIP_ALL = { allowedTags: [], allowedAttributes: {} };
+const clean = str => (str ? sanitizeHtml(String(str), STRIP_ALL) : str);
 
 // Recompute deadlineDays dynamically from date.start when it's a parseable ISO date.
 // Seeded events with human-readable dates (e.g. "18–19 May 2025") are skipped and
@@ -242,6 +247,10 @@ export const hostEvent = asyncHandler(async (req, res) => {
   const bannerFile   = req.file || files.bannerImage?.[0];
   const brochureFile = files.brochure?.[0];
 
+  // Enforce 5 MB limit specifically for banner images
+  if (bannerFile && bannerFile.size > 5 * 1024 * 1024)
+    return fail(res, 'Poster image must be 5 MB or smaller', 400);
+
   const [bannerResult, brochureResult] = await Promise.all([
     bannerFile   ? uploadEventBanner(bannerFile.buffer)  : null,
     brochureFile ? uploadBrochure(brochureFile.buffer)   : null,
@@ -255,17 +264,18 @@ export const hostEvent = asyncHandler(async (req, res) => {
     ? { url: brochureResult.secure_url, publicId: brochureResult.public_id }
     : { url: '', publicId: '' };
 
+  // Sanitize all user-supplied text fields before persisting
   const hosted = await HostedEvent.create({
     submittedBy:  req.user._id,
-    eventName, college, eventType,
-    startDate, endDate, city,
-    venue, teamSize, mode,
+    eventName: clean(eventName), college: clean(college), eventType: clean(eventType),
+    startDate, endDate, city: clean(city),
+    venue: clean(venue), teamSize, mode,
     hasPrize:     hasPrize === 'true' || hasPrize === true,
-    prizeDetails, prize1, prize2, prize3, totalPrize,
+    prizeDetails: clean(prizeDetails), prize1, prize2, prize3, totalPrize,
     isPaid:       isPaid === 'true' || isPaid === true,
-    entryFee, about, registrationUrl,
-    eligibility, rules, perks,
-    pocName, pocPhone, pocEmail, website,
+    entryFee, about: clean(about), registrationUrl,
+    eligibility: clean(eligibility), rules: clean(rules), perks: clean(perks),
+    pocName: clean(pocName), pocPhone, pocEmail, website,
     bannerImage, brochure,
   });
 
