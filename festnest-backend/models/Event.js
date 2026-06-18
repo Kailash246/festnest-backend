@@ -11,7 +11,10 @@ const eventSchema = new mongoose.Schema(
     category:  {
       type: String,
       required: true,
-      enum: ['Hackathon', 'Cultural Fest', 'Technical Fest', 'Workshop', 'Competition', 'Sports', 'Other', 'Mega Fest'],
+      // Additive only — existing values kept; new priority categories
+      // (Management, Startup) and the presented "Tech Talk" added so events
+      // in these categories validate when created/approved. No removals.
+      enum: ['Hackathon', 'Cultural Fest', 'Technical Fest', 'Workshop', 'Competition', 'Sports', 'Other', 'Mega Fest', 'Management', 'Startup', 'Tech Talk'],
     },
     entryType: {
       type: String,
