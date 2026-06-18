@@ -32,6 +32,16 @@ export const validateRegister = [
     .notEmpty().withMessage('OTP is required'),
   body('password')
     .isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body('organization')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 150 }).withMessage('Organization must not exceed 150 characters'),
+  // Designation is required only when registering as an organizer.
+  body('designation')
+    .if(body('role').equals('organizer'))
+    .trim()
+    .notEmpty().withMessage('Designation is required')
+    .isLength({ min: 2, max: 100 }).withMessage('Designation must be between 2 and 100 characters'),
 ];
 
 export const validateLogin = [

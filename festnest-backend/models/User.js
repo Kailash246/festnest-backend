@@ -20,9 +20,9 @@ const userSchema = new mongoose.Schema(
     branch:  { type: String, default: '' },
     phone:   { type: String, default: '' },
 
-    bio:          { type: String, default: '', maxlength: 160 },
-    organization: { type: String, default: '' },
-    designation:  { type: String, default: '' },
+    bio:          { type: String, default: '', maxlength: 160, trim: true },
+    organization: { type: String, default: '', maxlength: 150, trim: true },
+    designation:  { type: String, default: '', maxlength: 100, trim: true },
     website:      { type: String, default: '' },
     linkedin:     { type: String, default: '' },
     instagram:    { type: String, default: '' },

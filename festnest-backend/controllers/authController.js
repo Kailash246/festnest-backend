@@ -69,7 +69,12 @@ export const sendOtp = asyncHandler(async (req, res) => {
    Body: { name, email, otp, password, college?, city?, year?, branch? }
 ──────────────────────────────────────────────────────── */
 export const register = asyncHandler(async (req, res) => {
-  const { name, email, otp, password, college = '', city = '', year = '', branch = '', role: rawRole } = req.body;
+  const {
+    name, email, otp, password,
+    college = '', city = '', year = '', branch = '',
+    organization = '', designation = '',
+    role: rawRole,
+  } = req.body;
 
   if (!name || !email || !otp || !password)
     return fail(res, 'name, email, otp and password are required');
@@ -78,6 +83,10 @@ export const register = asyncHandler(async (req, res) => {
 
   // Self-registration can only yield 'user' or 'organizer' — never admin roles
   const role = rawRole === 'organizer' ? 'organizer' : 'user';
+
+  // Designation is mandatory for organizers
+  if (role === 'organizer' && (!designation || designation.trim().length < 2))
+    return fail(res, 'Designation is required for organizers');
 
   const lower = email.toLowerCase();
 
@@ -98,6 +107,8 @@ export const register = asyncHandler(async (req, res) => {
   const user = await User.create({
     name, email: lower, password,
     college, city, year, branch,
+    organization: organization.trim(),
+    designation:  designation.trim(),
     role,
     referralCode: refCode,
     isEmailVerified: true,
