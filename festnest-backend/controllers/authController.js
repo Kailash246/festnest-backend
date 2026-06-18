@@ -84,9 +84,13 @@ export const register = asyncHandler(async (req, res) => {
   // Self-registration can only yield 'user' or 'organizer' — never admin roles
   const role = rawRole === 'organizer' ? 'organizer' : 'user';
 
-  // Designation is mandatory for organizers
-  if (role === 'organizer' && (!designation || designation.trim().length < 2))
-    return fail(res, 'Designation is required for organizers');
+  // Organization & designation are mandatory for organizers
+  if (role === 'organizer') {
+    if (!organization || organization.trim().length < 2)
+      return fail(res, 'Organization / College name is required for organizers');
+    if (!designation || designation.trim().length < 2)
+      return fail(res, 'Designation is required for organizers');
+  }
 
   const lower = email.toLowerCase();
 
