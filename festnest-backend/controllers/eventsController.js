@@ -39,7 +39,12 @@ export const listEvents = asyncHandler(async (req, res) => {
     else filter.category = category;
   }
   if (entryType) filter.entryType = entryType;
-  if (city && city !== 'All Cities') filter.city = city;
+  if (city && city !== 'All Cities') {
+    // Case-insensitive exact match so SEO slugs ("chennai") match stored values
+    // ("Chennai"). Hyphens in URL slugs are treated as spaces ("new-delhi" → "New Delhi").
+    const term = String(city).trim().replace(/-/g, ' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.city = new RegExp(`^${term}$`, 'i');
+  }
   if (search) filter.$text = { $search: search };
 
   const sortMap = {
