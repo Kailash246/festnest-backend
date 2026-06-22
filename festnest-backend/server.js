@@ -18,6 +18,7 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import collegeRoutes     from './routes/college.js';
 import supportRoutes     from './routes/support.js';
 import adminRoutes       from './routes/admin.js';
+import sitemapRoutes     from './routes/sitemap.js';
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();
@@ -124,6 +125,9 @@ app.get('/health', (_req, res) =>
 app.get('/api/health', (_req, res) =>
   res.json({ success: true, status: 'ok', timestamp: new Date() })
 );
+
+/* ── SEO: dynamic sitemap (served at root, proxied from festnest.in/sitemap.xml) ── */
+app.use('/', sitemapRoutes);
 
 /* ── API routes ── */
 app.use('/api/auth',          authRoutes);
