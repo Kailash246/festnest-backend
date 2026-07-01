@@ -290,3 +290,16 @@ export const hostEvent = asyncHandler(async (req, res) => {
 
   return created(res, { hostedEvent: hosted, pointsEarned: 300 }, 'Event submitted for review');
 });
+
+/* ────────────────────────────────────────────────────────
+   GET /api/events/stats
+   Public. Returns real counts for use on landing page.
+──────────────────────────────────────────────────────── */
+export const getEventStats = asyncHandler(async (req, res) => {
+  const [totalEvents, colleges] = await Promise.all([
+    Event.countDocuments({ isActive: true, isApproved: true }),
+    Event.distinct('college', { isActive: true, isApproved: true }),
+  ]);
+  return ok(res, { totalEvents, totalColleges: colleges.length, totalCategories: 7 });
+});
+

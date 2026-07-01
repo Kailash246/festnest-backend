@@ -5,7 +5,7 @@ import { uploadEventFiles } from '../config/cloudinary.js';
 import {
   listEvents, trendingEvents, urgentEvents, featuredEvents, savedEvents,
   getEvent, saveEvent, unsaveEvent,
-  registerForEvent, cancelRegistration, hostEvent,
+  registerForEvent, cancelRegistration, hostEvent, getEventStats,
 } from '../controllers/eventsController.js';
 import { validate, validateHostEvent } from '../middleware/validate.js';
 
@@ -16,6 +16,7 @@ router.get('/trending',      trendingEvents);
 router.get('/urgent',        urgentEvents);
 router.get('/featured',      featuredEvents);
 router.get('/saved',         requireAuth, savedEvents);
+router.get('/stats',         getEventStats);
 router.get('/:slug',         optionalAuth, getEvent);
 
 router.post('/:slug/save',      requireAuth, saveEvent);
