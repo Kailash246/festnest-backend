@@ -13,6 +13,7 @@ const SITE = 'https://festnest.in';
 const STATIC_ROUTES = [
   { path: '/',         changefreq: 'daily',  priority: '1.0' },
   { path: '/explore',  changefreq: 'daily',  priority: '0.9' },
+  { path: '/about',    changefreq: 'monthly', priority: '0.9' },
   { path: '/discover', changefreq: 'weekly', priority: '0.9' },
   { path: '/blog',                                                          changefreq: 'weekly',  priority: '0.8' },
   { path: '/blog/how-to-win-a-hackathon',                                   changefreq: 'monthly', priority: '0.7' },
