@@ -92,6 +92,12 @@ export const register = asyncHandler(async (req, res) => {
       return fail(res, 'Designation is required for organizers');
   }
 
+  // College is mandatory for students
+  if (role === 'user') {
+    if (!college || college.trim().length < 2)
+      return fail(res, 'College name is required');
+  }
+
   const lower = email.toLowerCase();
 
   const valid = await OTP.verifyOTP(lower, otp, 'verify_email');
