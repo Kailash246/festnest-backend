@@ -11,6 +11,10 @@ import {
   addCollege, updateCollege, deleteCollege,
   broadcastNotification,
 } from '../controllers/adminController.js';
+import {
+  validate, validateAdminCreateEvent, validateAdjustPoints,
+  validateAddCollege, validateBroadcast,
+} from '../middleware/validate.js';
 
 const router = Router();
 
@@ -28,7 +32,7 @@ router.post('/submissions/:id/reject',  rejectSubmission);
 
 /* ── Live Event Management ── */
 router.get('/events',          listAllEvents);
-router.post('/events',         createEvent);
+router.post('/events',         ...validateAdminCreateEvent, validate, createEvent);
 router.patch('/events/:id',    updateEvent);
 router.delete('/events/:id',   deleteEvent);
 router.patch('/events/:id/restore',    restoreEvent);
@@ -39,7 +43,7 @@ router.delete('/events/:id/permanent', requireSuperAdmin, permanentDeleteEvent);
 router.get('/users',                  listUsers);
 router.get('/users/:id',              getUser);
 router.patch('/users/:id/ban',        toggleBanUser);
-router.patch('/users/:id/points',     adjustUserPoints);
+router.patch('/users/:id/points',     ...validateAdjustPoints, validate, adjustUserPoints);
 // Role change is superadmin-only
 router.patch('/users/:id/role',       requireSuperAdmin, setUserRole);
 
@@ -48,11 +52,11 @@ router.get('/tickets',       listTickets);
 router.patch('/tickets/:id', updateTicket);
 
 /* ── College Management ── */
-router.post('/colleges',         addCollege);
+router.post('/colleges',         ...validateAddCollege, validate, addCollege);
 router.patch('/colleges/:id',    updateCollege);
 router.delete('/colleges/:id',   deleteCollege);
 
 /* ── Broadcast Notifications ── */
-router.post('/notify', broadcastNotification);
+router.post('/notify', ...validateBroadcast, validate, broadcastNotification);
 
 export default router;

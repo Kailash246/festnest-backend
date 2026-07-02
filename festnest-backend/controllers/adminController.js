@@ -356,10 +356,14 @@ export const permanentDeleteEvent = asyncHandler(async (req, res) => {
 export const listUsers = asyncHandler(async (req, res) => {
   const { page = 1, limit = 20, search, role } = req.query;
   const filter = {};
-  if (search) filter.$or = [
-    { name:  { $regex: search, $options: 'i' } },
-    { email: { $regex: search, $options: 'i' } },
-  ];
+  if (search) {
+    // Escape regex metacharacters so user input is matched literally (no ReDoS)
+    const term = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.$or = [
+      { name:  { $regex: term, $options: 'i' } },
+      { email: { $regex: term, $options: 'i' } },
+    ];
+  }
   if (role) filter.role = role;
 
   const skip = (Number(page) - 1) * Number(limit);

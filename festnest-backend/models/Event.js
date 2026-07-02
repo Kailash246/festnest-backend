@@ -111,5 +111,9 @@ eventSchema.index({ entryType: 1 });
 eventSchema.index({ 'trending.rank': 1 });
 eventSchema.index({ name: 'text', college: 'text', city: 'text', category: 'text' });
 eventSchema.index({ isFeatured: 1, featuredOrder: 1 });
+// Compound indexes matching the public listing filters ({ isActive, isApproved, ... })
+eventSchema.index({ isActive: 1, isApproved: 1, category: 1 });
+eventSchema.index({ isActive: 1, isApproved: 1, city: 1 });
+eventSchema.index({ college: 1 });
 
 export default mongoose.model('Event', eventSchema);

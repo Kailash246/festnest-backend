@@ -59,7 +59,8 @@ export const sendOtp = asyncHandler(async (req, res) => {
   // Always return OTP in development so registration works without SMTP setup
   const devData = process.env.NODE_ENV !== 'production' ? { otp: code } : {};
 
-  console.log(`\n🔑  OTP for ${email} [${purpose}]: ${code}\n`);
+  if (process.env.NODE_ENV !== 'production')
+    console.log(`\n🔑  OTP for ${email} [${purpose}]: ${code}\n`);
 
   return ok(res, devData, `OTP sent to ${email}`);
 });
@@ -235,7 +236,8 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   if (!user) return ok(res, {}, RESET_MSG);
 
   const code = await OTP.createOTP(lower, 'reset_password');
-  console.log('RESET OTP for', lower, ':', code);
+  if (process.env.NODE_ENV !== 'production')
+    console.log('RESET OTP for', lower, ':', code);
 
   // Fire-and-forget — email delivery must never block or fail the request
   sendPasswordResetEmail(lower, code).catch(err =>

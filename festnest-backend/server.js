@@ -26,6 +26,14 @@ await connectDB();
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+/* ── Startup sanity check: JWT secrets must be strong ── */
+for (const name of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET']) {
+  const secret = process.env[name] || '';
+  if (secret.length < 32) {
+    console.warn(`⚠️  ${name} is ${secret.length ? 'under 32 characters' : 'not set'} — use a long random secret (e.g. \`openssl rand -hex 32\`).`);
+  }
+}
+
 /* ── Trust Render / proxy headers (required for rate-limit + correct IP) ── */
 app.set('trust proxy', 1);
 
@@ -90,8 +98,12 @@ app.use(cors({
 
 /* ── Logging & body parsing ── */
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+// Admin event editing sends long-form JSON (about/rules/eligibility), so it gets
+// a larger allowance; every other JSON body is small and capped at 10 kb.
+// File uploads are unaffected (multipart via multer, not express.json).
+app.use('/api/admin', express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
 /* ── NoSQL injection protection ── */
 app.use(mongoSanitize({ replaceWith: '_' }));
@@ -99,16 +111,18 @@ app.use(mongoSanitize({ replaceWith: '_' }));
 /* ── Global rate limiter ── */
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
-  max: 200,
+  max: 100,
   standardHeaders: true,
   legacyHeaders:   false,
   message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
 }));
 
-/* ── Stricter limiter for auth endpoints ── */
+/* ── Stricter limiter for credential endpoints ──
+   /refresh, /logout and /me stay on the global limiter: they fire on every
+   session renewal, so 10/15min per IP would lock out campuses behind one NAT. */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 10,
   standardHeaders: true,
   legacyHeaders:   false,
   message: { success: false, message: 'Too many attempts. Please wait a few minutes and try again.' },
@@ -116,7 +130,9 @@ const authLimiter = rateLimit({
 app.use('/api/auth/login',           authLimiter);
 app.use('/api/auth/register',        authLimiter);
 app.use('/api/auth/send-otp',        authLimiter);
+app.use('/api/auth/login-otp',       authLimiter);
 app.use('/api/auth/forgot-password', authLimiter);
+app.use('/api/auth/reset-password',  authLimiter);
 
 /* ── Health check ── */
 app.get('/health', (_req, res) =>
@@ -144,10 +160,9 @@ app.use(notFound);
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  const resendKey = process.env.RESEND_API_KEY;
   console.log(`\n🪺  FestNest API  →  http://localhost:${PORT}`);
   console.log(`   ENV:            ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   RESEND_API_KEY: ${resendKey ? '✅ set (' + resendKey.slice(0, 8) + '...)' : '⚠️  NOT SET'}`);
+  console.log(`   RESEND_API_KEY: ${process.env.RESEND_API_KEY ? '✅ set' : '⚠️  NOT SET'}`);
   console.log(`   MAIL_FROM:      ${process.env.MAIL_FROM || '(default)'}\n`);
 });
 

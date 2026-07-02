@@ -180,3 +180,74 @@ export const validateTicketReply = [
     .notEmpty().withMessage('Reply message is required')
     .isLength({ max: 2000 }).withMessage('Reply must not exceed 2000 characters'),
 ];
+
+/* ── College ──────────────────────────────────────────── */
+export const validateSetCollege = [
+  body('college')
+    .trim()
+    .notEmpty().withMessage('College name is required')
+    .isLength({ min: 2, max: 150 }).withMessage('College name must be between 2 and 150 characters'),
+];
+
+/* ── Admin ────────────────────────────────────────────── */
+export const validateAdminCreateEvent = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('Event name is required')
+    .isLength({ max: 100 }).withMessage('Event name must not exceed 100 characters'),
+  body('category').trim().notEmpty().withMessage('Category is required'),
+  body('entryType')
+    .isIn(['free', 'paid', 'prize']).withMessage('entryType must be free, paid or prize'),
+  body('college')
+    .trim()
+    .notEmpty().withMessage('College is required')
+    .isLength({ max: 150 }).withMessage('College must not exceed 150 characters'),
+  body('city')
+    .trim()
+    .notEmpty().withMessage('City is required')
+    .isLength({ max: 100 }).withMessage('City must not exceed 100 characters'),
+  body('startDate').trim().notEmpty().withMessage('startDate is required'),
+  body('about')
+    .optional()
+    .isLength({ max: 20000 }).withMessage('Description must not exceed 20000 characters'),
+];
+
+export const validateAdjustPoints = [
+  body('points')
+    .isInt({ min: -100000, max: 100000 }).withMessage('points must be an integer between -100000 and 100000')
+    .toInt(),
+  body('reason')
+    .optional()
+    .isLength({ max: 300 }).withMessage('Reason must not exceed 300 characters'),
+];
+
+export const validateAddCollege = [
+  body('name')
+    .trim()
+    .notEmpty().withMessage('College name is required')
+    .isLength({ max: 150 }).withMessage('College name must not exceed 150 characters'),
+  body('city')
+    .trim()
+    .notEmpty().withMessage('City is required')
+    .isLength({ max: 100 }).withMessage('City must not exceed 100 characters'),
+  body('state')
+    .trim()
+    .notEmpty().withMessage('State is required')
+    .isLength({ max: 100 }).withMessage('State must not exceed 100 characters'),
+];
+
+export const validateBroadcast = [
+  body('title')
+    .trim()
+    .notEmpty().withMessage('Title is required')
+    .isLength({ max: 200 }).withMessage('Title must not exceed 200 characters'),
+  body('sub')
+    .optional()
+    .isLength({ max: 500 }).withMessage('Message must not exceed 500 characters'),
+  body('type')
+    .optional()
+    .isIn(['deadlines', 'updates', 'system']).withMessage('type must be deadlines, updates or system'),
+  body('userIds')
+    .optional()
+    .isArray().withMessage('userIds must be an array'),
+];
