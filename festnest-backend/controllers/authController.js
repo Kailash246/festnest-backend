@@ -1,4 +1,6 @@
 // controllers/authController.js
+import bcrypt        from 'bcryptjs';
+import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
 import OTP           from '../models/OTP.js';
 import RefreshToken  from '../models/RefreshToken.js';
@@ -14,6 +16,29 @@ function clientInfo(req) {
   };
 }
 
+// Refresh tokens are stored bcrypt-hashed so a DB leak yields no usable tokens.
+// The token is SHA-256-digested first: bcrypt only reads the first 72 bytes, and
+// a user's refresh JWTs all share the same first 72 bytes (header + user id), so
+// hashing the raw token would make any of their tokens match any stored hash.
+const digestToken = (token) =>
+  createHash('sha256').update(token).digest('base64');
+
+const hashRefreshToken = (token) =>
+  bcrypt.hash(digestToken(token), 10);
+
+/** Find the stored (hashed) record matching a raw refresh token, or null. */
+async function findStoredRefreshToken(userId, rawToken) {
+  const digest     = digestToken(rawToken);
+  const candidates = await RefreshToken.find({
+    user:      userId,
+    expiresAt: { $gt: new Date() },
+  });
+  for (const stored of candidates) {
+    if (await bcrypt.compare(digest, stored.token)) return stored;
+  }
+  return null;
+}
+
 async function issueTokens(user, req) {
   const payload       = { id: user._id, email: user.email };
   const accessToken   = signAccessToken(payload);
@@ -22,7 +47,7 @@ async function issueTokens(user, req) {
 
   await RefreshToken.create({
     user:      user._id,
-    token:     rawRefresh,
+    token:     await hashRefreshToken(rawRefresh),
     expiresAt: refreshTokenExpiry(),
     ...clientInfo(req),
   });
@@ -183,10 +208,7 @@ export const refresh = asyncHandler(async (req, res) => {
   try { payload = verifyRefreshToken(refreshToken); }
   catch { return unauthorized(res, 'Invalid refresh token'); }
 
-  const stored = await RefreshToken.findOne({
-    token: refreshToken,
-    expiresAt: { $gt: new Date() },
-  });
+  const stored = await findStoredRefreshToken(payload.id, refreshToken);
   if (!stored) return unauthorized(res, 'Refresh token revoked or expired');
 
   const user = await User.findById(payload.id);
@@ -205,7 +227,14 @@ export const refresh = asyncHandler(async (req, res) => {
 ──────────────────────────────────────────────────────── */
 export const logout = asyncHandler(async (req, res) => {
   const { refreshToken } = req.body;
-  if (refreshToken) await RefreshToken.deleteOne({ token: refreshToken });
+  if (refreshToken) {
+    // Tokens are stored hashed, so locate the record via the token's user id
+    try {
+      const payload = verifyRefreshToken(refreshToken);
+      const stored  = await findStoredRefreshToken(payload.id, refreshToken);
+      if (stored) await RefreshToken.deleteOne({ _id: stored._id });
+    } catch { /* invalid/expired token — nothing to revoke */ }
+  }
   return ok(res, {}, 'Logged out successfully');
 });
 
