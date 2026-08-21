@@ -2,6 +2,7 @@
 import mongoose     from 'mongoose';
 import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
+import Competition  from '../models/Competition.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
@@ -12,24 +13,25 @@ import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.
 const STRIP_ALL = { allowedTags: [], allowedAttributes: {} };
 const clean = str => (str ? sanitizeHtml(String(str), STRIP_ALL) : str);
 
-const parseCompetitions = (raw) => {
-  if (!raw) return [];
-  let parsed;
-  try { parsed = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return []; }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.slice(0, 50).filter(item => item && String(item.name || '').trim()).map(item => ({
-    name: clean(String(item.name).slice(0, 120)),
-    description: clean(String(item.description || '').slice(0, 1000)),
-    eligibility: clean(String(item.eligibility || '').slice(0, 300)),
-    registrationFee: clean(String(item.registrationFee || '').slice(0, 40)),
-    prizeDetails: clean(String(item.prizeDetails || '').slice(0, 300)),
-    venue: clean(String(item.venue || '').slice(0, 160)),
-    teamSize: clean(String(item.teamSize || '').slice(0, 80)),
-    format: clean(String(item.format || '').slice(0, 120)),
-    duration: clean(String(item.duration || '').slice(0, 120)),
-    rules: clean(String(item.rules || '').slice(0, 1500)),
-    registrationLink: String(item.registrationLink || '').trim().slice(0, 500),
-  }));
+const competitionFields = [
+  'name', 'description', 'eligibility', 'registrationFee', 'prizeDetails',
+  'venue', 'teamSize', 'format', 'duration', 'rules', 'registrationLink',
+];
+
+const cleanCompetition = (input = {}) => Object.fromEntries(
+  competitionFields.map(field => [field, clean(String(input[field] || '').slice(0, field === 'rules' ? 1500 : field === 'description' ? 1000 : 500))])
+);
+
+const getOwnedEvent = async (slug, user) => {
+  const lookup = mongoose.Types.ObjectId.isValid(slug)
+    ? { $or: [{ slug }, { _id: slug }], isActive: true, isApproved: true }
+    : { slug, isActive: true, isApproved: true };
+  const event = await Event.findOne(lookup);
+  if (!event) return { error: 'not_found' };
+  const isOwner = event.hostedBy && event.hostedBy.toString() === user._id.toString();
+  const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+  if (!isOwner && !isAdmin) return { error: 'forbidden' };
+  return { event };
 };
 
 // Recompute deadlineDays dynamically from date.start when it's a parseable ISO date.
@@ -177,7 +179,47 @@ export const getEvent = asyncHandler(async (req, res) => {
     isSaved = !!(await SavedEvent.findOne({ user: req.user._id, event: event._id }));
   }
 
-  return ok(res, { event: withDeadlineDays(event), related: related.map(withDeadlineDays), isSaved });
+  const competitions = await Competition.find({ event: event._id }).sort({ createdAt: 1 }).lean();
+  return ok(res, { event: { ...withDeadlineDays(event), competitions }, related: related.map(withDeadlineDays), isSaved });
+});
+
+/* ────────────────────────────────────────────────────────
+   Competition management
+   Public reads are returned with the parent event above. Mutations require
+   the event owner (or an admin) and never create a top-level Event.
+──────────────────────────────────────────────────────── */
+export const addCompetition = asyncHandler(async (req, res) => {
+  const result = await getOwnedEvent(req.params.slug, req.user);
+  if (result.error === 'not_found') return notFoundRes(res, 'Event not found');
+  if (result.error === 'forbidden') return fail(res, 'You are not allowed to manage this event', 403);
+  const fields = cleanCompetition(req.body);
+  if (!fields.name.trim()) return fail(res, 'Competition name is required', 400);
+  const competition = await Competition.create({ event: result.event._id, ...fields });
+  return created(res, { competition }, 'Competition added');
+});
+
+export const updateCompetition = asyncHandler(async (req, res) => {
+  const result = await getOwnedEvent(req.params.slug, req.user);
+  if (result.error === 'not_found') return notFoundRes(res, 'Event not found');
+  if (result.error === 'forbidden') return fail(res, 'You are not allowed to manage this event', 403);
+  const fields = cleanCompetition(req.body);
+  if (!fields.name.trim()) return fail(res, 'Competition name is required', 400);
+  const competition = await Competition.findOneAndUpdate(
+    { _id: req.params.competitionId, event: result.event._id },
+    fields,
+    { new: true, runValidators: true }
+  );
+  if (!competition) return notFoundRes(res, 'Competition not found');
+  return ok(res, { competition }, 'Competition updated');
+});
+
+export const deleteCompetition = asyncHandler(async (req, res) => {
+  const result = await getOwnedEvent(req.params.slug, req.user);
+  if (result.error === 'not_found') return notFoundRes(res, 'Event not found');
+  if (result.error === 'forbidden') return fail(res, 'You are not allowed to manage this event', 403);
+  const deleted = await Competition.findOneAndDelete({ _id: req.params.competitionId, event: result.event._id });
+  if (!deleted) return notFoundRes(res, 'Competition not found');
+  return ok(res, {}, 'Competition deleted');
 });
 
 /* ────────────────────────────────────────────────────────
@@ -263,7 +305,6 @@ export const hostEvent = asyncHandler(async (req, res) => {
     isPaid = false, entryFee = '', about = '', registrationUrl = '',
     eligibility = '', rules = '', perks = '',
     pocName = '', pocPhone = '', pocEmail = '', website = '',
-    individualCompetitions = '[]',
   } = req.body;
 
   if (!eventName || !college || !eventType || !startDate || !city)
@@ -302,7 +343,6 @@ export const hostEvent = asyncHandler(async (req, res) => {
     entryFee, about: clean(about), registrationUrl,
     eligibility: clean(eligibility), rules: clean(rules), perks: clean(perks),
     pocName: clean(pocName), pocPhone, pocEmail, website,
-    individualCompetitions: parseCompetitions(individualCompetitions),
     bannerImage, brochure,
   });
 

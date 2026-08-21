@@ -88,6 +88,8 @@ export const myPoints = asyncHandler(async (req, res) => {
 });
 
 export const myHostedEvents = asyncHandler(async (req, res) => {
-  const hosted = await HostedEvent.find({ submittedBy: req.user._id }).sort({ createdAt: -1 }).lean();
+  const hosted = await HostedEvent.find({ submittedBy: req.user._id })
+    .populate('linkedEvent', 'name slug _id isActive')
+    .sort({ createdAt: -1 }).lean();
   return ok(res, { hostedEvents: hosted });
 });

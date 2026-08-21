@@ -1,23 +1,6 @@
 // models/Event.js
 import mongoose from 'mongoose';
 
-const individualCompetitionSchema = new mongoose.Schema(
-  {
-    name:             { type: String, required: true, trim: true, maxlength: 120 },
-    description:      { type: String, default: '', trim: true, maxlength: 1000 },
-    eligibility:      { type: String, default: '', trim: true, maxlength: 300 },
-    registrationFee:  { type: String, default: '', trim: true, maxlength: 40 },
-    prizeDetails:     { type: String, default: '', trim: true, maxlength: 300 },
-    venue:            { type: String, default: '', trim: true, maxlength: 160 },
-    teamSize:         { type: String, default: '', trim: true, maxlength: 80 },
-    format:           { type: String, default: '', trim: true, maxlength: 120 },
-    duration:         { type: String, default: '', trim: true, maxlength: 120 },
-    rules:            { type: String, default: '', trim: true, maxlength: 1500 },
-    registrationLink: { type: String, default: '', trim: true, maxlength: 500 },
-  },
-  { _id: true }
-);
-
 const eventSchema = new mongoose.Schema(
   {
     slug:      { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -103,7 +86,6 @@ const eventSchema = new mongoose.Schema(
     rules:       { type: String, default: '' },
     perks:       { type: String, default: '' },
     mode:        { type: String, default: '' },
-    individualCompetitions: { type: [individualCompetitionSchema], default: [] },
 
     brochure: {
       url:      { type: String, default: '' },
