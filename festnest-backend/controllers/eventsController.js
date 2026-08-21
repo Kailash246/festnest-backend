@@ -12,6 +12,26 @@ import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.
 const STRIP_ALL = { allowedTags: [], allowedAttributes: {} };
 const clean = str => (str ? sanitizeHtml(String(str), STRIP_ALL) : str);
 
+const parseCompetitions = (raw) => {
+  if (!raw) return [];
+  let parsed;
+  try { parsed = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.slice(0, 50).filter(item => item && String(item.name || '').trim()).map(item => ({
+    name: clean(String(item.name).slice(0, 120)),
+    description: clean(String(item.description || '').slice(0, 1000)),
+    eligibility: clean(String(item.eligibility || '').slice(0, 300)),
+    registrationFee: clean(String(item.registrationFee || '').slice(0, 40)),
+    prizeDetails: clean(String(item.prizeDetails || '').slice(0, 300)),
+    venue: clean(String(item.venue || '').slice(0, 160)),
+    teamSize: clean(String(item.teamSize || '').slice(0, 80)),
+    format: clean(String(item.format || '').slice(0, 120)),
+    duration: clean(String(item.duration || '').slice(0, 120)),
+    rules: clean(String(item.rules || '').slice(0, 1500)),
+    registrationLink: String(item.registrationLink || '').trim().slice(0, 500),
+  }));
+};
+
 // Recompute deadlineDays dynamically from date.start when it's a parseable ISO date.
 // Seeded events with human-readable dates (e.g. "18–19 May 2025") are skipped and
 // keep whatever value is stored in the DB.
@@ -243,6 +263,7 @@ export const hostEvent = asyncHandler(async (req, res) => {
     isPaid = false, entryFee = '', about = '', registrationUrl = '',
     eligibility = '', rules = '', perks = '',
     pocName = '', pocPhone = '', pocEmail = '', website = '',
+    individualCompetitions = '[]',
   } = req.body;
 
   if (!eventName || !college || !eventType || !startDate || !city)
@@ -281,6 +302,7 @@ export const hostEvent = asyncHandler(async (req, res) => {
     entryFee, about: clean(about), registrationUrl,
     eligibility: clean(eligibility), rules: clean(rules), perks: clean(perks),
     pocName: clean(pocName), pocPhone, pocEmail, website,
+    individualCompetitions: parseCompetitions(individualCompetitions),
     bannerImage, brochure,
   });
 

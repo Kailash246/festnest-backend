@@ -180,6 +180,7 @@ export const approveSubmission = asyncHandler(async (req, res) => {
     ...(submission.rules      && { rules:       submission.rules }),
     ...(submission.perks      && { perks:       submission.perks }),
     ...(submission.mode       && { mode:        submission.mode }),
+    individualCompetitions: submission.individualCompetitions || [],
     hostedBy:        submission.submittedBy._id,
     isActive:        true,
     isApproved:      true,
