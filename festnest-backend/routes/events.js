@@ -6,9 +6,9 @@ import {
   listEvents, trendingEvents, urgentEvents, featuredEvents, savedEvents,
   getEvent, saveEvent, unsaveEvent,
   registerForEvent, cancelRegistration, hostEvent, getEventStats,
-  addCompetition, updateCompetition, deleteCompetition,
+  updateOwnedEvent, addCompetition, updateCompetition, deleteCompetition,
 } from '../controllers/eventsController.js';
-import { validate, validateHostEvent } from '../middleware/validate.js';
+import { validate, validateCompetition, validateHostEvent, validateLiveEventUpdate } from '../middleware/validate.js';
 
 const router = Router();
 
@@ -25,8 +25,12 @@ router.delete('/:slug/save',    requireAuth, unsaveEvent);
 router.post('/:slug/register',  requireAuth, registerForEvent);
 router.delete('/:slug/register',requireAuth, cancelRegistration);
 
-router.post('/:slug/competitions', requireAuth, addCompetition);
-router.patch('/:slug/competitions/:competitionId', requireAuth, updateCompetition);
+// Owners can edit only their own approved, live event. The controller applies
+// a strict whitelist and preserves protected fields and competitions.
+router.patch('/:slug', requireAuth, uploadEventFiles, ...validateLiveEventUpdate, validate, updateOwnedEvent);
+
+router.post('/:slug/competitions', requireAuth, ...validateCompetition, validate, addCompetition);
+router.patch('/:slug/competitions/:competitionId', requireAuth, ...validateCompetition, validate, updateCompetition);
 router.delete('/:slug/competitions/:competitionId', requireAuth, deleteCompetition);
 
 // Host event — multipart upload then validation (body fields come from FormData)

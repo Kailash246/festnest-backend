@@ -29,8 +29,7 @@ const getOwnedEvent = async (slug, user) => {
   const event = await Event.findOne(lookup);
   if (!event) return { error: 'not_found' };
   const isOwner = event.hostedBy && event.hostedBy.toString() === user._id.toString();
-  const isAdmin = user.role === 'admin' || user.role === 'superadmin';
-  if (!isOwner && !isAdmin) return { error: 'forbidden' };
+  if (!isOwner) return { error: 'forbidden' };
   return { event };
 };
 
@@ -137,7 +136,7 @@ export const getEvent = asyncHandler(async (req, res) => {
 
   // Admins can view inactive events; regular users only see active ones
   const slugFilter = { slug: req.params.slug };
-  if (!isAdminPreview) slugFilter.isActive = true;
+  if (!isAdminPreview) Object.assign(slugFilter, { isActive: true, isApproved: true });
 
   // Only increment view count for public (non-admin) views
   let event;
@@ -154,7 +153,7 @@ export const getEvent = asyncHandler(async (req, res) => {
   // Fallback: if no slug match and param looks like an ObjectId, try _id lookup
   if (!event && mongoose.Types.ObjectId.isValid(req.params.slug)) {
     const idFilter = { _id: req.params.slug };
-    if (!isAdminPreview) idFilter.isActive = true;
+    if (!isAdminPreview) Object.assign(idFilter, { isActive: true, isApproved: true });
     if (isAdminPreview) {
       event = await Event.findOne(idFilter).lean();
     } else {
@@ -172,6 +171,7 @@ export const getEvent = asyncHandler(async (req, res) => {
     category: event.category,
     _id: { $ne: event._id },
     isActive: true,
+    isApproved: true,
   }).limit(4).lean();
 
   let isSaved = false;
@@ -183,10 +183,104 @@ export const getEvent = asyncHandler(async (req, res) => {
   return ok(res, { event: { ...withDeadlineDays(event), competitions }, related: related.map(withDeadlineDays), isSaved });
 });
 
+/*
+   PATCH /api/events/:slug
+
+   The route accepts the host-form fields only. It deliberately does not pass
+   req.body to Mongoose so an owner cannot alter identity, approval, analytics,
+   or an event's separately managed competitions.
+*/
+export const updateOwnedEvent = asyncHandler(async (req, res) => {
+  const result = await getOwnedEvent(req.params.slug, req.user);
+  if (result.error === 'not_found') return notFoundRes(res, 'Event not found');
+  if (result.error === 'forbidden') return fail(res, 'You are not allowed to edit this event', 403);
+
+  const event = result.event;
+  const {
+    eventName, college, eventType, startDate, endDate = '', city, venue = '',
+    teamSize = '', mode = 'Offline', hasPrize = false, prize1 = '', prize2 = '',
+    prize3 = '', totalPrize = '', isPaid = false, entryFee = '', about = '',
+    registrationUrl = '', eligibility = '', rules = '', perks = '', pocName = '',
+    pocPhone = '', pocEmail = '', website = '',
+  } = req.body;
+
+  const paid = isPaid === 'true' || isPaid === true;
+  const prize = hasPrize === 'true' || hasPrize === true;
+  const fee = clean(entryFee);
+  const prizeDetails = prize && totalPrize ? `₹${clean(totalPrize)} Prize Pool` : '';
+
+  const update = {
+    name: clean(eventName),
+    category: clean(eventType),
+    college: clean(college),
+    city: clean(city),
+    organiser: { ...event.organiser.toObject(), location: clean(city), sub: clean(college) },
+    date: { ...event.date.toObject(), start: startDate, end: endDate },
+    venue: clean(venue),
+    teamSize: clean(req.body.teamSize ?? event.teamSize),
+    mode: clean(mode),
+    about: clean(about),
+    registrationUrl: clean(registrationUrl),
+    eligibility: clean(eligibility),
+    rules: clean(rules),
+    perks: clean(perks),
+    pocName: clean(pocName),
+    pocPhone: clean(pocPhone),
+    pocEmail: clean(pocEmail),
+    website: clean(website),
+    prize1: clean(req.body.prize1 ?? event.prize1),
+    prize2: clean(req.body.prize2 ?? event.prize2),
+    prize3: clean(req.body.prize3 ?? event.prize3),
+    totalPrize: prize ? clean(totalPrize) : '',
+    entryType: paid ? 'paid' : prize ? 'prize' : 'free',
+    price: {
+      ...event.price.toObject(),
+      display: paid ? `₹${fee}` : 'Free',
+      note: paid ? 'per team' : 'to register',
+    },
+    badge: {
+      ...event.badge.toObject(),
+      text: prize ? `🏆 ${prizeDetails}` : paid ? `₹${fee} Entry` : 'Free Entry',
+      class: prize ? 'badge-prize' : paid ? 'badge-paid' : 'badge-free',
+    },
+  };
+
+  const files = req.files || {};
+  const bannerFile = files.bannerImage?.[0];
+  const brochureFile = files.brochure?.[0];
+  if (bannerFile && bannerFile.size > 5 * 1024 * 1024)
+    return fail(res, 'Poster image must be 5 MB or smaller', 400);
+
+  // Upload first; the existing asset remains in place unless the replacement
+  // upload succeeds and the event document is saved successfully.
+  const [bannerResult, brochureResult] = await Promise.all([
+    bannerFile ? uploadEventBanner(bannerFile.buffer) : null,
+    brochureFile ? uploadBrochure(brochureFile.buffer) : null,
+  ]);
+  if (bannerResult) update.image = { url: bannerResult.secure_url, publicId: bannerResult.public_id };
+  if (brochureResult) update.brochure = { url: brochureResult.secure_url, publicId: brochureResult.public_id };
+
+  const oldBannerId = event.image?.publicId;
+  const oldBrochureId = event.brochure?.publicId;
+  event.set(update);
+  await event.save();
+
+  // Cleanup is intentionally best-effort and only runs after the new values
+  // are persisted. A cleanup failure never rolls back a successful edit.
+  const cleanup = [];
+  if (bannerResult && oldBannerId && oldBannerId !== bannerResult.public_id)
+    cleanup.push(cloudinary.uploader.destroy(oldBannerId));
+  if (brochureResult && oldBrochureId && oldBrochureId !== brochureResult.public_id)
+    cleanup.push(cloudinary.uploader.destroy(oldBrochureId, { resource_type: 'raw' }));
+  if (cleanup.length) Promise.allSettled(cleanup).catch(() => {});
+
+  return ok(res, { event: withDeadlineDays(event.toObject()) }, 'Event updated successfully');
+});
+
 /* ────────────────────────────────────────────────────────
    Competition management
    Public reads are returned with the parent event above. Mutations require
-   the event owner (or an admin) and never create a top-level Event.
+   the live event owner and never create a top-level Event.
 ──────────────────────────────────────────────────────── */
 export const addCompetition = asyncHandler(async (req, res) => {
   const result = await getOwnedEvent(req.params.slug, req.user);
@@ -364,4 +458,3 @@ export const getEventStats = asyncHandler(async (req, res) => {
   ]);
   return ok(res, { totalEvents, totalColleges: colleges.length, totalCategories: 7 });
 });
-

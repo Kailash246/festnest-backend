@@ -110,6 +110,59 @@ export const validateHostEvent = [
     .withMessage('Registration link must be a valid URL (include https://)'),
 ];
 
+/* Live-event edits use the same field contract as the host form, but they
+   are authorized separately by the event controller. Keeping this validator
+   explicit prevents a multipart PATCH from becoming an unvalidated update. */
+export const validateLiveEventUpdate = [
+  body('eventName')
+    .trim()
+    .notEmpty().withMessage('Event title is required')
+    .isLength({ max: 100 }).withMessage('Event title must not exceed 100 characters'),
+  body('eventType')
+    .trim()
+    .isIn(['Hackathon', 'Cultural Fest', 'Technical Fest', 'Workshop', 'Competition', 'Sports', 'Other', 'Mega Fest', 'Management', 'Startup', 'Tech Talk'])
+    .withMessage('Please select a valid category'),
+  body('startDate').trim().notEmpty().withMessage('Start date is required'),
+  body('college')
+    .trim()
+    .notEmpty().withMessage('Organizer name is required')
+    .isLength({ max: 100 }).withMessage('Organizer name must not exceed 100 characters'),
+  body('city')
+    .trim()
+    .notEmpty().withMessage('Location is required')
+    .isLength({ max: 200 }).withMessage('Location must not exceed 200 characters'),
+  body('about')
+    .trim()
+    .notEmpty().withMessage('Description is required')
+    .isLength({ max: 5000 }).withMessage('Description must not exceed 5000 characters'),
+  body('registrationUrl')
+    .trim()
+    .isURL(URL_OPTS).withMessage('Registration link must be a valid URL (include https://)'),
+  body('totalPrize')
+    .optional({ checkFalsy: true })
+    .custom(v => !isNaN(Number(String(v).replace(/,/g, ''))) && Number(String(v).replace(/,/g, '')) >= 0)
+    .withMessage('Prize pool must be a non-negative number'),
+  body('entryFee')
+    .optional({ checkFalsy: true })
+    .custom(v => {
+      const clean = String(v).trim();
+      if (!clean || clean.toLowerCase() === 'free') return true;
+      const n = Number(clean.replace(/,/g, ''));
+      return !isNaN(n) && n >= 0;
+    })
+    .withMessage('Registration fee must be a non-negative number or "Free"'),
+  body('pocPhone').trim().matches(PHONE_RE).withMessage('Invalid phone number format'),
+  body('pocEmail').trim().isEmail().withMessage('Invalid contact email format'),
+  body('website').optional({ checkFalsy: true }).isURL(URL_OPTS).withMessage('Website must be a valid URL (include https://)'),
+];
+
+export const validateCompetition = [
+  body('name').trim().notEmpty().withMessage('Competition name is required').isLength({ max: 120 }).withMessage('Competition name must not exceed 120 characters'),
+  body('description').optional().isLength({ max: 1000 }).withMessage('Description must not exceed 1000 characters'),
+  body('rules').optional().isLength({ max: 1500 }).withMessage('Rules must not exceed 1500 characters'),
+  body('registrationLink').optional({ checkFalsy: true }).isURL(URL_OPTS).withMessage('Registration link must be a valid URL (include https://)'),
+];
+
 /* ── Users / Profile ──────────────────────────────────── */
 export const validateUpdateProfile = [
   body('name')

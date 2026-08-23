@@ -34,6 +34,7 @@ const eventSchema = new mongoose.Schema(
 
     date: {
       start:    { type: String, required: true },  // human-readable, e.g. "18–19 May 2025"
+      end:      { type: String, default: '' },
       time:     { type: String, default: '' },
       deadlineDays: { type: Number, default: 0 },
     },
