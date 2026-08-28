@@ -60,10 +60,11 @@ function dateKeyToUtc(key) {
   return Date.UTC(year, month - 1, day);
 }
 
-function getEndingSoonDetails(endDate, now = new Date()) {
-  if (!endDate) return null;
-
-  const raw = String(endDate).trim();
+function getEndingSoonDetails(endDate, startDate, now = new Date()) {
+  // End date is optional in the host form. An omitted end date represents a
+  // one-day event, so its start date is also its effective end date.
+  const raw = String(endDate || startDate || '').trim();
+  if (!raw) return null;
   const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
   const todayKey = indiaDateKey(now);
   const windowEnd = new Date(dateKeyToUtc(todayKey));
@@ -157,7 +158,7 @@ export const urgentEvents = asyncHandler(async (_req, res) => {
   const now = new Date();
   const events = await Event.find({ isActive: true, isApproved: true }).lean();
   const endingSoon = events
-    .map(event => ({ event, details: getEndingSoonDetails(event.date?.end, now) }))
+    .map(event => ({ event, details: getEndingSoonDetails(event.date?.end, event.date?.start, now) }))
     .filter(({ details }) => details)
     .sort((a, b) => a.details.endAt - b.details.endAt)
     .map(({ event, details }) => ({
