@@ -44,6 +44,47 @@ function withDeadlineDays(ev) {
   return { ...ev, date: { ...ev.date, deadlineDays: days } };
 }
 
+const INDIA_TIME_ZONE = 'Asia/Kolkata';
+
+function indiaDateKey(date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: INDIA_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function dateKeyToUtc(key) {
+  const [year, month, day] = key.split('-').map(Number);
+  return Date.UTC(year, month - 1, day);
+}
+
+function getEndingSoonDetails(endDate, now = new Date()) {
+  if (!endDate) return null;
+
+  const raw = String(endDate).trim();
+  const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
+  const todayKey = indiaDateKey(now);
+  const windowEnd = new Date(dateKeyToUtc(todayKey));
+  windowEnd.setUTCDate(windowEnd.getUTCDate() + 15);
+  const windowEndKey = windowEnd.toISOString().slice(0, 10);
+
+  // Date-only values represent an event that remains active through that local
+  // calendar day. Timestamp values retain their precise end time.
+  const endAt = dateOnly ? null : new Date(raw);
+  if (!dateOnly && isNaN(endAt)) return null;
+  if (endAt && endAt < now) return null;
+
+  const endKey = dateOnly ? dateOnly[1] : indiaDateKey(endAt);
+  if (endKey < todayKey || endKey > windowEndKey) return null;
+
+  return {
+    endAt: dateOnly ? dateKeyToUtc(endKey) : endAt.getTime(),
+    daysUntilEnd: Math.round((dateKeyToUtc(endKey) - dateKeyToUtc(todayKey)) / 86400000),
+  };
+}
+
 /* ────────────────────────────────────────────────────────
    GET /api/events
    Query: category, entryType, city, search, sort, page, limit
@@ -113,9 +154,18 @@ export const featuredEvents = asyncHandler(async (_req, res) => {
    GET /api/events/urgent
 ──────────────────────────────────────────────────────── */
 export const urgentEvents = asyncHandler(async (_req, res) => {
-  const events = await Event.find({ isActive: true })
-    .sort({ 'date.deadlineDays': 1 }).limit(4).lean();
-  return ok(res, { events: events.map(withDeadlineDays) });
+  const now = new Date();
+  const events = await Event.find({ isActive: true, isApproved: true }).lean();
+  const endingSoon = events
+    .map(event => ({ event, details: getEndingSoonDetails(event.date?.end, now) }))
+    .filter(({ details }) => details)
+    .sort((a, b) => a.details.endAt - b.details.endAt)
+    .map(({ event, details }) => ({
+      ...event,
+      endingSoonDays: details.daysUntilEnd,
+    }));
+
+  return ok(res, { events: endingSoon });
 });
 
 /* ────────────────────────────────────────────────────────
