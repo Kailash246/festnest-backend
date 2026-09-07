@@ -19,6 +19,7 @@ import collegeRoutes     from './routes/college.js';
 import supportRoutes     from './routes/support.js';
 import adminRoutes       from './routes/admin.js';
 import sitemapRoutes     from './routes/sitemap.js';
+import caRoutes          from './routes/ca.js';
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();
@@ -154,6 +155,7 @@ app.use('/api/leaderboard',   leaderboardRoutes);
 app.use('/api/college',       collegeRoutes);
 app.use('/api/support',       supportRoutes);
 app.use('/api/admin',         adminRoutes);
+app.use('/api/ca',            caRoutes);
 
 /* ── Error handling (must be last) ── */
 app.use(notFound);

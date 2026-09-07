@@ -1,8 +1,10 @@
 // controllers/adminController.js
 import Event      from '../models/Event.js';
 import User       from '../models/User.js';
+import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
          SupportTicket, PointsLog, College } from '../models/index.js';
+import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail }       from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
@@ -15,6 +17,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
     totalUsers,
     totalEvents,
     pendingSubmissions,
+    pendingAmbassadors,
     totalRegistrations,
     openTickets,
     recentUsers,
@@ -23,6 +26,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
     User.countDocuments({ role: 'user' }),
     Event.countDocuments({ isActive: true }),
     HostedEvent.countDocuments({ status: 'pending' }),
+    CampusAmbassador.countDocuments({ status: { $in: ['applied', 'screening'] } }),
     Registration.countDocuments({}),
     SupportTicket.countDocuments({ status: 'open' }),
     User.find({ role: 'user' }).sort({ createdAt: -1 }).limit(5)
@@ -50,7 +54,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
   ]);
 
   return ok(res, {
-    totals: { totalUsers, totalEvents, pendingSubmissions, totalRegistrations, openTickets },
+    totals: { totalUsers, totalEvents, pendingSubmissions, pendingAmbassadors, totalRegistrations, openTickets },
     categoryBreakdown,
     registrationsTrend,
     recentUsers,
@@ -575,3 +579,237 @@ export const broadcastNotification = asyncHandler(async (req, res) => {
 
   return ok(res, { sent: docs.length }, `Notification sent to ${docs.length} user(s)`);
 });
+
+/* ═══════════════════════════════════════════════════════════
+   CAMPUS AMBASSADOR MANAGEMENT
+═══════════════════════════════════════════════════════════ */
+
+/**
+ * GET /api/admin/ca
+ * List ambassador applications with filtering, search, pagination, and status counts
+ */
+export const listAmbassadors = asyncHandler(async (req, res) => {
+  const { status, q, sort = 'newest', page = 1, limit = 20 } = req.query;
+
+  const filter = {};
+  if (status && status !== 'all') {
+    if (status === 'pending') {
+      filter.status = { $in: ['applied', 'screening'] };
+    } else {
+      filter.status = status;
+    }
+  }
+
+  if (q && q.trim()) {
+    const rx = new RegExp(q.trim(), 'i');
+    filter.$or = [
+      { name: rx },
+      { college: rx },
+      { city: rx },
+      { email: rx },
+      { caId: rx },
+      { referralCode: rx },
+    ];
+  }
+
+  let sortCriteria = { createdAt: -1 };
+  if (sort === 'oldest') sortCriteria = { createdAt: 1 };
+  if (sort === 'name') sortCriteria = { name: 1 };
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const [ambassadors, total, counts] = await Promise.all([
+    CampusAmbassador.find(filter)
+      .sort(sortCriteria)
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    CampusAmbassador.countDocuments(filter),
+    Promise.all([
+      CampusAmbassador.countDocuments({}),
+      CampusAmbassador.countDocuments({ status: { $in: ['applied', 'screening'] } }),
+      CampusAmbassador.countDocuments({ status: 'approved' }),
+      CampusAmbassador.countDocuments({ status: 'rejected' }),
+    ]).then(([all, pending, approved, rejected]) => ({ all, pending, approved, rejected })),
+  ]);
+
+  return ok(res, {
+    ambassadors,
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum) || 1,
+    counts,
+  });
+});
+
+/**
+ * GET /api/admin/ca/:id
+ * Retrieve single ambassador profile with full audit log and computed platform stats
+ */
+export const getAmbassador = asyncHandler(async (req, res) => {
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
+  const stats = await computeImpactStats(ca);
+  return ok(res, { ambassador: ca, stats });
+});
+
+/**
+ * PATCH /api/admin/ca/:id/approve
+ * Server-side approval generating deterministic caId, referral code, validity, and audit trail
+ */
+export const approveAmbassador = asyncHandler(async (req, res) => {
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
+  if (ca.status === 'approved') {
+    return fail(res, 'This applicant has already been approved');
+  }
+
+  if (ca.status === 'rejected' && !req.body.allowReopen) {
+    return fail(res, 'Application was previously rejected. Check "Reopen & Approve" to override.');
+  }
+
+  const cityCode = getCityCode(ca.city);
+  ca.cityCode = cityCode;
+
+  // Server-side deterministic sequential ID generation:
+  // Count existing approved ambassadors with this city code
+  const cityCount = await CampusAmbassador.countDocuments({
+    cityCode,
+    status: 'approved',
+    _id: { $ne: ca._id },
+  });
+  const seq = cityCount + 1;
+  const caId = `FN-CA-${cityCode}-${String(seq).padStart(3, '0')}`;
+  const referralCode = `FN-${cityCode}-${String(seq).padStart(3, '0')}`;
+
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear() + 2; // 2 years valid
+  const validThru = `${month} / ${year}`;
+
+  ca.caId = caId;
+  ca.referralCode = referralCode;
+  ca.validThru = validThru;
+  ca.status = 'approved';
+  ca.tier = 'Bronze';
+  ca.approvedAt = now;
+  ca.rejectedAt = null;
+  ca.rejectionReason = '';
+
+  // Link user if matching account exists
+  if (!ca.userId) {
+    const user = await User.findOne({ email: ca.email }).select('_id').lean();
+    if (user) ca.userId = user._id;
+  }
+
+  ca.auditLog.push({
+    action: 'approved',
+    by: req.user._id,
+    byName: req.user.name || 'Admin',
+    date: now,
+    notes: req.body.notes || 'Application approved and credentials generated',
+    meta: { caId, referralCode, validThru },
+  });
+
+  await ca.save();
+  return ok(res, { ambassador: ca }, `Approved ${ca.name} with ID ${caId}`);
+});
+
+/**
+ * PATCH /api/admin/ca/:id/reject
+ * Reject application with mandatory or provided reason and audit logging
+ */
+export const rejectAmbassador = asyncHandler(async (req, res) => {
+  const { reason = 'Application does not meet current criteria', notes = '' } = req.body;
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
+  if (ca.status === 'rejected') {
+    return fail(res, 'This applicant has already been rejected');
+  }
+
+  const now = new Date();
+  ca.status = 'rejected';
+  ca.rejectedAt = now;
+  ca.rejectionReason = reason;
+
+  ca.auditLog.push({
+    action: 'rejected',
+    by: req.user._id,
+    byName: req.user.name || 'Admin',
+    date: now,
+    notes: reason + (notes ? ` (${notes})` : ''),
+  });
+
+  await ca.save();
+  return ok(res, { ambassador: ca }, 'Application rejected');
+});
+
+/**
+ * PATCH /api/admin/ca/:id/status
+ * Transition status (e.g. to 'screening' or back to 'applied') with audit notes
+ */
+export const updateAmbassadorStatus = asyncHandler(async (req, res) => {
+  const { status, notes = '' } = req.body;
+  if (!['applied', 'screening'].includes(status)) {
+    return fail(res, 'Use dedicated approve/reject endpoints for final decisions');
+  }
+
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
+  ca.status = status;
+  ca.auditLog.push({
+    action: status,
+    by: req.user._id,
+    byName: req.user.name || 'Admin',
+    date: new Date(),
+    notes,
+  });
+
+  await ca.save();
+  return ok(res, { ambassador: ca }, `Status moved to ${status}`);
+});
+
+/**
+ * PATCH /api/admin/ca/:id/adjust
+ * Adjust manual metric overrides with mandatory audit reason
+ */
+export const adjustAmbassadorStats = asyncHandler(async (req, res) => {
+  const { organizersOnboarded, eventsSourced, referralSignups, reason } = req.body;
+  if (!reason || !reason.trim()) {
+    return fail(res, 'An audit reason is required for manual metric adjustments');
+  }
+
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador not found');
+
+  if (!ca.adjustments) {
+    ca.adjustments = { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 };
+  }
+
+  if (typeof organizersOnboarded === 'number') ca.adjustments.organizersOnboarded = organizersOnboarded;
+  if (typeof eventsSourced === 'number') ca.adjustments.eventsSourced = eventsSourced;
+  if (typeof referralSignups === 'number') ca.adjustments.referralSignups = referralSignups;
+
+  // Recompute live stats to update tier
+  const live = await computeImpactStats(ca);
+  ca.tier = live.tier;
+
+  ca.auditLog.push({
+    action: 'stat_adjustment',
+    by: req.user._id,
+    byName: req.user.name || 'Admin',
+    date: new Date(),
+    notes: reason.trim(),
+    meta: { adjustments: ca.adjustments, computedTier: live.tier },
+  });
+
+  await ca.save();
+  return ok(res, { ambassador: ca, stats: live }, 'Ambassador metrics updated with audit record');
+});
+

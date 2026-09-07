@@ -39,6 +39,9 @@ const userSchema = new mongoose.Schema(
     points:       { type: Number, default: 0 },
     referralCode: { type: String, unique: true, sparse: true },
 
+    referredByCA:        { type: mongoose.Schema.Types.ObjectId, ref: 'CampusAmbassador', default: null, index: true },
+    caReferralCodeUsed:  { type: String, default: '', trim: true },
+
     isEmailVerified: { type: Boolean, default: false },
     isBanned:        { type: Boolean, default: false },
 

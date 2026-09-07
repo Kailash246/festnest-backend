@@ -2,6 +2,7 @@
 import bcrypt        from 'bcryptjs';
 import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
+import CampusAmbassador from '../models/CampusAmbassador.js';
 import OTP           from '../models/OTP.js';
 import RefreshToken  from '../models/RefreshToken.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, refreshTokenExpiry } from '../utils/jwt.js';
@@ -140,6 +141,18 @@ export const register = asyncHandler(async (req, res) => {
   const refCode = name.replace(/\s+/g, '').toUpperCase().slice(0, 5)
     + Math.floor(1000 + Math.random() * 9000);
 
+  // Check for Campus Ambassador referral attribution
+  let referredByCA = null;
+  let caReferralCodeUsed = '';
+  const refToLookup = (req.body.referralCode || req.body.ref || '').toString().trim().toUpperCase();
+  if (refToLookup) {
+    const matchingCA = await CampusAmbassador.findOne({ referralCode: refToLookup, status: 'approved' });
+    if (matchingCA) {
+      referredByCA = matchingCA._id;
+      caReferralCodeUsed = matchingCA.referralCode;
+    }
+  }
+
   const user = await User.create({
     name, email: lower, password,
     college, city, year, branch,
@@ -147,6 +160,8 @@ export const register = asyncHandler(async (req, res) => {
     designation:  designation.trim(),
     role,
     referralCode: refCode,
+    referredByCA,
+    caReferralCodeUsed,
     isEmailVerified: true,
   });
 

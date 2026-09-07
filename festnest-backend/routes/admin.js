@@ -10,6 +10,8 @@ import {
   listTickets, updateTicket,
   addCollege, updateCollege, deleteCollege,
   broadcastNotification,
+  listAmbassadors, getAmbassador, approveAmbassador, rejectAmbassador,
+  updateAmbassadorStatus, adjustAmbassadorStats,
 } from '../controllers/adminController.js';
 import {
   validate, validateAdminCreateEvent, validateAdjustPoints,
@@ -58,5 +60,13 @@ router.delete('/colleges/:id',   deleteCollege);
 
 /* ── Broadcast Notifications ── */
 router.post('/notify', ...validateBroadcast, validate, broadcastNotification);
+
+/* ── Campus Ambassadors ── */
+router.get('/ca',               listAmbassadors);
+router.get('/ca/:id',           getAmbassador);
+router.patch('/ca/:id/approve', approveAmbassador);
+router.patch('/ca/:id/reject',  rejectAmbassador);
+router.patch('/ca/:id/status',  updateAmbassadorStatus);
+router.patch('/ca/:id/adjust',  adjustAmbassadorStats);
 
 export default router;
