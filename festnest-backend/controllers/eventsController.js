@@ -92,42 +92,94 @@ function getEndingSoonDetails(endDate, startDate, now = new Date()) {
 ──────────────────────────────────────────────────────── */
 export const listEvents = asyncHandler(async (req, res) => {
   const { category, entryType, city, search, sort = 'trending', page = 1, limit = 20 } = req.query;
+  const { category, entryType, city, search, sort = 'trending', page = 1, limit = 16 } = req.query;
 
   const filter = { isActive: true, isApproved: true };
 
   if (category && category !== 'all') {
     // Handle quick-filter aliases
     if (category === 'free')  filter.entryType = 'free';
+    if (category === 'free')       filter.entryType = 'free';
     else if (category === 'prize') filter.entryType = 'prize';
+    else if (category === 'week')  filter['date.deadlineDays'] = { $lte: 7, $gte: 0 };
     else filter.category = category;
   }
   if (entryType) filter.entryType = entryType;
   if (city && city !== 'All Cities') {
+  if (entryType && entryType !== 'All') {
+    if (entryType === 'Free' || entryType === 'free')            filter.entryType = 'free';
+    else if (entryType === 'Paid' || entryType === 'paid')       filter.entryType = 'paid';
+    else if (entryType === 'Prize Pool' || entryType === 'prize')filter.entryType = 'prize';
+    else filter.entryType = entryType;
+  }
+  if (city && city !== 'All Cities' && city !== 'all') {
     // Case-insensitive exact match so SEO slugs ("chennai") match stored values
     // ("Chennai"). Hyphens in URL slugs are treated as spaces ("new-delhi" → "New Delhi").
     const term = String(city).trim().replace(/-/g, ' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.city = new RegExp(`^${term}$`, 'i');
   }
   if (search) filter.$text = { $search: search };
+  if (search) {
+    const s = String(search).trim();
+    if (s) {
+      const term = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = [
+        { name: new RegExp(term, 'i') },
+        { college: new RegExp(term, 'i') },
+        { city: new RegExp(term, 'i') },
+        { category: new RegExp(term, 'i') },
+      ];
+    }
+  }
 
   const sortMap = {
     trending:   { 'trending.rank': 1 },
+    trending:   { 'trending.rank': 1, createdAt: -1 },
     latest:     { createdAt: -1 },
     oldest:     { createdAt: 1 },
     registered: { 'stats.registrationCount': -1 },
     deadline:   { 'date.deadlineDays': 1 },
+    registered: { 'stats.registrationCount': -1, createdAt: -1 },
+    deadline:   { 'date.deadlineDays': 1, createdAt: -1 },
   };
   const sortObj = sortMap[sort] || sortMap.trending;
+  const normalizedSort = String(sort).toLowerCase().replace(/\s+/g, '');
+  const sortKeyMap = {
+    trending: 'trending',
+    latest: 'latest',
+    oldest: 'oldest',
+    mostregistered: 'registered',
+    registered: 'registered',
+    deadlinesoon: 'deadline',
+    deadline: 'deadline',
+  };
+  const resolvedSort = sortKeyMap[normalizedSort] || 'trending';
+  const sortObj = sortMap[resolvedSort] || sortMap.trending;
 
   const skip  = (Number(page) - 1) * Number(limit);
+  const pageNum  = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, parseInt(limit, 10) || 16);
+  const skip     = (pageNum - 1) * limitNum;
+
   const [events, total] = await Promise.all([
     Event.find(filter).sort(sortObj).skip(skip).limit(Number(limit)).lean(),
+    Event.find(filter).sort(sortObj).skip(skip).limit(limitNum).lean(),
     Event.countDocuments(filter),
   ]);
+
+  const totalPages = Math.ceil(total / limitNum) || 1;
 
   return ok(res, {
     events: events.map(withDeadlineDays),
     pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
+    pagination: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: totalPages,
+      hasPrev: pageNum > 1,
+      hasNext: pageNum < totalPages,
+    },
   });
 });
 
