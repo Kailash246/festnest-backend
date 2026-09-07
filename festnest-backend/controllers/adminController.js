@@ -403,8 +403,8 @@ export const toggleBanUser = asyncHandler(async (req, res) => {
 /** PATCH /api/admin/users/:id/role  — change role (superadmin only) */
 export const setUserRole = asyncHandler(async (req, res) => {
   const { role } = req.body;
-  if (!['user', 'admin', 'superadmin'].includes(role))
-    return fail(res, 'role must be user, admin, or superadmin');
+  if (!['user', 'organizer', 'admin', 'superadmin'].includes(role))
+    return fail(res, 'role must be user, organizer, admin, or superadmin');
 
   const user = await User.findByIdAndUpdate(
     req.params.id, { role }, { new: true }
