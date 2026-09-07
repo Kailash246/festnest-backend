@@ -33,15 +33,196 @@ const getOwnedEvent = async (slug, user) => {
   return { event };
 };
 
-// Recompute deadlineDays dynamically from date.start when it's a parseable ISO date.
-// Seeded events with human-readable dates (e.g. "18–19 May 2025") are skipped and
-// keep whatever value is stored in the DB.
-function withDeadlineDays(ev) {
-  if (!ev?.date?.start) return ev;
-  const d = new Date(ev.date.start);
-  if (isNaN(d)) return ev;
-  const days = Math.max(0, Math.ceil((d - Date.now()) / 86400000));
-  return { ...ev, date: { ...ev.date, deadlineDays: days } };
+function parseEventStartDate(startDate) {
+  const raw = String(startDate || '').trim();
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    if (raw.includes('T')) {
+      const dt = new Date(raw);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+    const date = new Date(Number(y), Number(m) - 1, Number(d));
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  const simpleRange = raw.match(/^(\d{1,2})\s*[\u2013\u2014-]\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (simpleRange) {
+    const [, startDay, , monthText, year] = simpleRange;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(startDay));
+    }
+  }
+
+  const textMatch = raw.match(/^(\d{1,2})[\s-]+([A-Za-z]+)(?:,)?[\s-]+(\d{4})$/);
+  if (textMatch) {
+    const [, day, monthText, year] = textMatch;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(day));
+    }
+  }
+
+  const monthFirst = raw.match(/^([A-Za-z]+)\s+(\d{1,2})(?:,)?\s+(\d{4})$/);
+  if (monthFirst) {
+    const [, monthText, day, year] = monthFirst;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(day));
+    }
+  }
+
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function parseEventEndDate(endDate, startDate) {
+  const raw = String(endDate || startDate || '').trim();
+  if (!raw) return null;
+
+  // 1. ISO format with date (YYYY-MM-DD)
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const [, y, m, d] = isoMatch;
+    if (raw.includes('T')) {
+      const dt = new Date(raw);
+      if (!isNaN(dt.getTime())) return dt;
+    }
+    const date = new Date(Number(y), Number(m) - 1, Number(d), 23, 59, 59, 999);
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  // 2. Simple range with en-dash, em-dash, or hyphen (e.g. '18–19 May 2025' or '18 - 19 May 2025')
+  const simpleRange = raw.match(/^(\d{1,2})\s*[\u2013\u2014-]\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (simpleRange) {
+    const [, , endDay, monthText, year] = simpleRange;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(endDay), 23, 59, 59, 999);
+    }
+  }
+
+  // 3. Cross-month range (e.g. '30 May – 2 June 2025')
+  const crossMonth = raw.match(/[\u2013\u2014-]\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (crossMonth) {
+    const [, endDay, monthText, year] = crossMonth;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(endDay), 23, 59, 59, 999);
+    }
+  }
+
+  // 4. Single formatted date: '19 May 2025', '19 May, 2025', '19-May-2025'
+  const textMatch = raw.match(/^(\d{1,2})[\s-]+([A-Za-z]+)(?:,)?[\s-]+(\d{4})$/);
+  if (textMatch) {
+    const [, day, monthText, year] = textMatch;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(day), 23, 59, 59, 999);
+    }
+  }
+
+  // 5. Month Day, Year: 'May 19, 2025' or 'May 19 2025'
+  const monthFirst = raw.match(/^([A-Za-z]+)\s+(\d{1,2})(?:,)?\s+(\d{4})$/);
+  if (monthFirst) {
+    const [, monthText, day, year] = monthFirst;
+    const monthIndex = new Date(monthText + ' 1, ' + year).getMonth();
+    if (!isNaN(monthIndex)) {
+      return new Date(Number(year), monthIndex, Number(day), 23, 59, 59, 999);
+    }
+  }
+
+  // 6. Generic Date fallback
+  const d = new Date(raw);
+  if (!isNaN(d.getTime())) {
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }
+
+  return null;
+}
+
+export function isEventExpired(ev, now = new Date()) {
+  if (!ev) return false;
+  const endDate = ev.endDate || ev.date?.end || '';
+  const startDate = ev.startDate || ev.date?.start || (typeof ev.date === 'string' ? ev.date : '');
+  const end = parseEventEndDate(endDate, startDate);
+  if (!end) return false;
+  return end.getTime() < now.getTime();
+}
+
+export function getSortComparator(sortType) {
+  switch (sortType) {
+    case 'latest':
+      return (a, b) => {
+        const tA = new Date(a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
+        const tB = new Date(b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
+        return tB - tA;
+      };
+    case 'oldest':
+      return (a, b) => {
+        const tA = new Date(a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
+        const tB = new Date(b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
+        return tA - tB;
+      };
+    case 'mostregistered':
+    case 'registered':
+      return (a, b) => (b.stats?.registrationCount || b.registrationCount || 0) - (a.stats?.registrationCount || a.registrationCount || 0);
+    case 'deadlinesoon':
+    case 'deadline':
+      return (a, b) => {
+        const dA = a.date?.deadlineDays ?? a.deadlineDays ?? 999;
+        const dB = b.date?.deadlineDays ?? b.deadlineDays ?? 999;
+        return dA - dB;
+      };
+    case 'trending':
+    default:
+      return (a, b) => {
+        const rA = a.trending?.rank ?? (a.isFeatured ? 0 : 999);
+        const rB = b.trending?.rank ?? (b.isFeatured ? 0 : 999);
+        if (rA !== rB) return rA - rB;
+        const cA = new Date(a.createdAt || 0).getTime();
+        const cB = new Date(b.createdAt || 0).getTime();
+        return cB - cA;
+      };
+  }
+}
+
+export function sortEventsByStatus(events, comparator, now = new Date()) {
+  if (!Array.isArray(events)) return [];
+  const active = [];
+  const expired = [];
+
+  for (const ev of events) {
+    if (ev && isEventExpired(ev, now)) {
+      expired.push(ev);
+    } else if (ev) {
+      active.push(ev);
+    }
+  }
+
+  if (comparator) {
+    active.sort(comparator);
+    expired.sort(comparator);
+  }
+
+  return [...active, ...expired];
+}
+
+// Recompute deadlineDays dynamically from date.start when it's parseable
+function withDeadlineDays(ev, now = new Date()) {
+  const startRaw = ev?.date?.start || ev?.startDate;
+  if (!startRaw) return ev;
+  const startDt = parseEventStartDate(startRaw);
+  if (!startDt) return ev;
+  const days = Math.ceil((startDt.getTime() - now.getTime()) / 86400000);
+  if (ev.date && typeof ev.date === 'object') {
+    return { ...ev, date: { ...ev.date, deadlineDays: days } };
+  }
+  return { ...ev, deadlineDays: days };
 }
 
 const INDIA_TIME_ZONE = 'Asia/Kolkata';
@@ -61,8 +242,6 @@ function dateKeyToUtc(key) {
 }
 
 function getEndingSoonDetails(endDate, startDate, now = new Date()) {
-  // End date is optional in the host form. An omitted end date represents a
-  // one-day event, so its start date is also its effective end date.
   const raw = String(endDate || startDate || '').trim();
   if (!raw) return null;
   const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
@@ -71,8 +250,6 @@ function getEndingSoonDetails(endDate, startDate, now = new Date()) {
   windowEnd.setUTCDate(windowEnd.getUTCDate() + 15);
   const windowEndKey = windowEnd.toISOString().slice(0, 10);
 
-  // Date-only values represent an event that remains active through that local
-  // calendar day. Timestamp values retain their precise end time.
   const endAt = dateOnly ? null : new Date(raw);
   if (!dateOnly && isNaN(endAt)) return null;
   if (endAt && endAt < now) return null;
@@ -91,34 +268,29 @@ function getEndingSoonDetails(endDate, startDate, now = new Date()) {
    Query: category, entryType, city, search, sort, page, limit
 ──────────────────────────────────────────────────────── */
 export const listEvents = asyncHandler(async (req, res) => {
-  const { category, entryType, city, search, sort = 'trending', page = 1, limit = 20 } = req.query;
   const { category, entryType, city, search, sort = 'trending', page = 1, limit = 16 } = req.query;
 
   const filter = { isActive: true, isApproved: true };
 
   if (category && category !== 'all') {
-    // Handle quick-filter aliases
-    if (category === 'free')  filter.entryType = 'free';
     if (category === 'free')       filter.entryType = 'free';
     else if (category === 'prize') filter.entryType = 'prize';
     else if (category === 'week')  filter['date.deadlineDays'] = { $lte: 7, $gte: 0 };
     else filter.category = category;
   }
-  if (entryType) filter.entryType = entryType;
-  if (city && city !== 'All Cities') {
+
   if (entryType && entryType !== 'All') {
-    if (entryType === 'Free' || entryType === 'free')            filter.entryType = 'free';
-    else if (entryType === 'Paid' || entryType === 'paid')       filter.entryType = 'paid';
-    else if (entryType === 'Prize Pool' || entryType === 'prize')filter.entryType = 'prize';
+    if (entryType === 'Free' || entryType === 'free')             filter.entryType = 'free';
+    else if (entryType === 'Paid' || entryType === 'paid')        filter.entryType = 'paid';
+    else if (entryType === 'Prize Pool' || entryType === 'prize') filter.entryType = 'prize';
     else filter.entryType = entryType;
   }
+
   if (city && city !== 'All Cities' && city !== 'all') {
-    // Case-insensitive exact match so SEO slugs ("chennai") match stored values
-    // ("Chennai"). Hyphens in URL slugs are treated as spaces ("new-delhi" → "New Delhi").
     const term = String(city).trim().replace(/-/g, ' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.city = new RegExp(`^${term}$`, 'i');
   }
-  if (search) filter.$text = { $search: search };
+
   if (search) {
     const s = String(search).trim();
     if (s) {
@@ -132,17 +304,10 @@ export const listEvents = asyncHandler(async (req, res) => {
     }
   }
 
-  const sortMap = {
-    trending:   { 'trending.rank': 1 },
-    trending:   { 'trending.rank': 1, createdAt: -1 },
-    latest:     { createdAt: -1 },
-    oldest:     { createdAt: 1 },
-    registered: { 'stats.registrationCount': -1 },
-    deadline:   { 'date.deadlineDays': 1 },
-    registered: { 'stats.registrationCount': -1, createdAt: -1 },
-    deadline:   { 'date.deadlineDays': 1, createdAt: -1 },
-  };
-  const sortObj = sortMap[sort] || sortMap.trending;
+  const now = new Date();
+  let allMatching = await Event.find(filter).lean();
+  allMatching = allMatching.map(ev => withDeadlineDays(ev, now));
+
   const normalizedSort = String(sort).toLowerCase().replace(/\s+/g, '');
   const sortKeyMap = {
     trending: 'trending',
@@ -154,24 +319,20 @@ export const listEvents = asyncHandler(async (req, res) => {
     deadline: 'deadline',
   };
   const resolvedSort = sortKeyMap[normalizedSort] || 'trending';
-  const sortObj = sortMap[resolvedSort] || sortMap.trending;
+  const sortComparator = getSortComparator(resolvedSort);
 
-  const skip  = (Number(page) - 1) * Number(limit);
+  // Active events always appear first, expired events always appear at the bottom
+  const sortedEvents = sortEventsByStatus(allMatching, sortComparator, now);
+  const total = sortedEvents.length;
+
   const pageNum  = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, parseInt(limit, 10) || 16);
   const skip     = (pageNum - 1) * limitNum;
-
-  const [events, total] = await Promise.all([
-    Event.find(filter).sort(sortObj).skip(skip).limit(Number(limit)).lean(),
-    Event.find(filter).sort(sortObj).skip(skip).limit(limitNum).lean(),
-    Event.countDocuments(filter),
-  ]);
-
+  const paginatedEvents = sortedEvents.slice(skip, skip + limitNum);
   const totalPages = Math.ceil(total / limitNum) || 1;
 
   return ok(res, {
-    events: events.map(withDeadlineDays),
-    pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
+    events: paginatedEvents,
     pagination: {
       total,
       page: pageNum,
@@ -187,20 +348,23 @@ export const listEvents = asyncHandler(async (req, res) => {
    GET /api/events/trending
 ──────────────────────────────────────────────────────── */
 export const trendingEvents = asyncHandler(async (_req, res) => {
-  const events = await Event.find({ isActive: true, 'trending.rank': { $ne: null } })
-    .sort({ 'trending.rank': 1 }).limit(5).lean();
-  return ok(res, { events: events.map(withDeadlineDays) });
+  const now = new Date();
+  const events = await Event.find({ isActive: true, 'trending.rank': { $ne: null } }).lean();
+  const formatted = events.map(ev => withDeadlineDays(ev, now));
+  const sorted = sortEventsByStatus(formatted, getSortComparator('trending'), now);
+  return ok(res, { events: sorted.slice(0, 5) });
 });
 
 /* ────────────────────────────────────────────────────────
    GET /api/events/featured
 ──────────────────────────────────────────────────────── */
 export const featuredEvents = asyncHandler(async (_req, res) => {
-  const events = await Event.find({ isActive: true, isApproved: true, isFeatured: true })
-    .sort({ featuredOrder: 1, createdAt: -1 })
-    .limit(6)
-    .lean();
-  return ok(res, { events: events.map(withDeadlineDays) });
+  const now = new Date();
+  const events = await Event.find({ isActive: true, isApproved: true, isFeatured: true }).lean();
+  const formatted = events.map(ev => withDeadlineDays(ev, now));
+  const comparator = (a, b) => (a.featuredOrder || 0) - (b.featuredOrder || 0);
+  const sorted = sortEventsByStatus(formatted, comparator, now);
+  return ok(res, { events: sorted.slice(0, 6) });
 });
 
 /* ────────────────────────────────────────────────────────
@@ -225,9 +389,12 @@ export const urgentEvents = asyncHandler(async (_req, res) => {
    GET /api/events/saved   (auth required)
 ──────────────────────────────────────────────────────── */
 export const savedEvents = asyncHandler(async (req, res) => {
+  const now = new Date();
   const saved = await SavedEvent.find({ user: req.user._id })
     .populate('event').sort({ createdAt: -1 }).lean();
-  return ok(res, { events: saved.map(s => s.event).filter(Boolean).map(withDeadlineDays) });
+  const rawEvents = saved.map(s => s.event).filter(Boolean).map(ev => withDeadlineDays(ev, now));
+  const sorted = sortEventsByStatus(rawEvents, getSortComparator('latest'), now);
+  return ok(res, { events: sorted });
 });
 
 /* ────────────────────────────────────────────────────────
@@ -241,7 +408,6 @@ export const getEvent = asyncHandler(async (req, res) => {
   const slugFilter = { slug: req.params.slug };
   if (!isAdminPreview) Object.assign(slugFilter, { isActive: true, isApproved: true });
 
-  // Only increment view count for public (non-admin) views
   let event;
   if (isAdminPreview) {
     event = await Event.findOne(slugFilter).lean();
@@ -253,7 +419,6 @@ export const getEvent = asyncHandler(async (req, res) => {
     ).lean();
   }
 
-  // Fallback: if no slug match and param looks like an ObjectId, try _id lookup
   if (!event && mongoose.Types.ObjectId.isValid(req.params.slug)) {
     const idFilter = { _id: req.params.slug };
     if (!isAdminPreview) Object.assign(idFilter, { isActive: true, isApproved: true });
@@ -270,12 +435,16 @@ export const getEvent = asyncHandler(async (req, res) => {
 
   if (!event) return notFoundRes(res, 'Event not found');
 
+  const now = new Date();
   const related = await Event.find({
     category: event.category,
     _id: { $ne: event._id },
     isActive: true,
     isApproved: true,
-  }).limit(4).lean();
+  }).lean();
+
+  const formattedRelated = related.map(ev => withDeadlineDays(ev, now));
+  const sortedRelated = sortEventsByStatus(formattedRelated, getSortComparator('trending'), now).slice(0, 4);
 
   let isSaved = false;
   if (req.user) {
@@ -283,7 +452,7 @@ export const getEvent = asyncHandler(async (req, res) => {
   }
 
   const competitions = await Competition.find({ event: event._id }).sort({ createdAt: 1 }).lean();
-  return ok(res, { event: { ...withDeadlineDays(event), competitions }, related: related.map(withDeadlineDays), isSaved });
+  return ok(res, { event: { ...withDeadlineDays(event, now), competitions }, related: sortedRelated, isSaved });
 });
 
 /*
