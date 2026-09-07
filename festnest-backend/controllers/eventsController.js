@@ -33,7 +33,7 @@ const getOwnedEvent = async (slug, user) => {
   return { event };
 };
 
-function parseEventStartDate(startDate) {
+export function parseEventStartDate(startDate) {
   const raw = String(startDate || '').trim();
   if (!raw) return null;
 
@@ -154,6 +154,11 @@ export function isEventExpired(ev, now = new Date()) {
   return end.getTime() < now.getTime();
 }
 
+export function isEventFeatured(ev) {
+  if (!ev) return false;
+  return Boolean(ev.isFeatured || ev.featured || ev.badgeText === 'Featured' || ev.badge?.text === 'Featured');
+}
+
 export function getSortComparator(sortType) {
   switch (sortType) {
     case 'latest':
@@ -181,8 +186,8 @@ export function getSortComparator(sortType) {
     case 'trending':
     default:
       return (a, b) => {
-        const rA = a.trending?.rank ?? (a.isFeatured ? 0 : 999);
-        const rB = b.trending?.rank ?? (b.isFeatured ? 0 : 999);
+        const rA = a.trending?.rank ?? 999;
+        const rB = b.trending?.rank ?? 999;
         if (rA !== rB) return rA - rB;
         const cA = new Date(a.createdAt || 0).getTime();
         const cB = new Date(b.createdAt || 0).getTime();
@@ -193,32 +198,42 @@ export function getSortComparator(sortType) {
 
 export function sortEventsByStatus(events, comparator, now = new Date()) {
   if (!Array.isArray(events)) return [];
-  const active = [];
-  const expired = [];
+  const featuredActive = [];
+  const nonFeaturedActive = [];
+  const featuredExpired = [];
+  const nonFeaturedExpired = [];
 
   for (const ev of events) {
-    if (ev && isEventExpired(ev, now)) {
-      expired.push(ev);
-    } else if (ev) {
-      active.push(ev);
+    if (!ev) continue;
+    const expired = isEventExpired(ev, now);
+    const featured = isEventFeatured(ev);
+    if (expired) {
+      if (featured) featuredExpired.push(ev);
+      else nonFeaturedExpired.push(ev);
+    } else {
+      if (featured) featuredActive.push(ev);
+      else nonFeaturedActive.push(ev);
     }
   }
 
   if (comparator) {
-    active.sort(comparator);
-    expired.sort(comparator);
+    featuredActive.sort(comparator);
+    nonFeaturedActive.sort(comparator);
+    featuredExpired.sort(comparator);
+    nonFeaturedExpired.sort(comparator);
   }
 
-  return [...active, ...expired];
+  return [...featuredActive, ...nonFeaturedActive, ...featuredExpired, ...nonFeaturedExpired];
 }
 
 // Recompute deadlineDays dynamically from date.start when it's parseable
 function withDeadlineDays(ev, now = new Date()) {
+  if (!ev) return ev;
   const startRaw = ev?.date?.start || ev?.startDate;
   if (!startRaw) return ev;
   const startDt = parseEventStartDate(startRaw);
   if (!startDt) return ev;
-  const days = Math.ceil((startDt.getTime() - now.getTime()) / 86400000);
+  const days = Math.max(0, Math.ceil((startDt.getTime() - now.getTime()) / 86400000));
   if (ev.date && typeof ev.date === 'object') {
     return { ...ev, date: { ...ev.date, deadlineDays: days } };
   }
@@ -242,6 +257,8 @@ function dateKeyToUtc(key) {
 }
 
 function getEndingSoonDetails(endDate, startDate, now = new Date()) {
+  // End date is optional in the host form. An omitted end date represents a
+  // one-day event, so its start date is also its effective end date.
   const raw = String(endDate || startDate || '').trim();
   if (!raw) return null;
   const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
@@ -250,6 +267,8 @@ function getEndingSoonDetails(endDate, startDate, now = new Date()) {
   windowEnd.setUTCDate(windowEnd.getUTCDate() + 15);
   const windowEndKey = windowEnd.toISOString().slice(0, 10);
 
+  // Date-only values represent an event that remains active through that local
+  // calendar day. Timestamp values retain their precise end time.
   const endAt = dateOnly ? null : new Date(raw);
   if (!dateOnly && isNaN(endAt)) return null;
   if (endAt && endAt < now) return null;
@@ -273,6 +292,7 @@ export const listEvents = asyncHandler(async (req, res) => {
   const filter = { isActive: true, isApproved: true };
 
   if (category && category !== 'all') {
+    // Handle quick-filter aliases
     if (category === 'free')       filter.entryType = 'free';
     else if (category === 'prize') filter.entryType = 'prize';
     else if (category === 'week')  filter['date.deadlineDays'] = { $lte: 7, $gte: 0 };
@@ -287,6 +307,8 @@ export const listEvents = asyncHandler(async (req, res) => {
   }
 
   if (city && city !== 'All Cities' && city !== 'all') {
+    // Case-insensitive exact match so SEO slugs ("chennai") match stored values
+    // ("Chennai"). Hyphens in URL slugs are treated as spaces ("new-delhi" → "New Delhi").
     const term = String(city).trim().replace(/-/g, ' ').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     filter.city = new RegExp(`^${term}$`, 'i');
   }
@@ -321,13 +343,14 @@ export const listEvents = asyncHandler(async (req, res) => {
   const resolvedSort = sortKeyMap[normalizedSort] || 'trending';
   const sortComparator = getSortComparator(resolvedSort);
 
-  // Active events always appear first, expired events always appear at the bottom
+  // Priority order: Featured active → Active/upcoming non-featured → Expired at bottom
   const sortedEvents = sortEventsByStatus(allMatching, sortComparator, now);
   const total = sortedEvents.length;
 
   const pageNum  = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, parseInt(limit, 10) || 16);
   const skip     = (pageNum - 1) * limitNum;
+
   const paginatedEvents = sortedEvents.slice(skip, skip + limitNum);
   const totalPages = Math.ceil(total / limitNum) || 1;
 
@@ -408,6 +431,7 @@ export const getEvent = asyncHandler(async (req, res) => {
   const slugFilter = { slug: req.params.slug };
   if (!isAdminPreview) Object.assign(slugFilter, { isActive: true, isApproved: true });
 
+  // Only increment view count for public (non-admin) views
   let event;
   if (isAdminPreview) {
     event = await Event.findOne(slugFilter).lean();
@@ -419,6 +443,7 @@ export const getEvent = asyncHandler(async (req, res) => {
     ).lean();
   }
 
+  // Fallback: if no slug match and param looks like an ObjectId, try _id lookup
   if (!event && mongoose.Types.ObjectId.isValid(req.params.slug)) {
     const idFilter = { _id: req.params.slug };
     if (!isAdminPreview) Object.assign(idFilter, { isActive: true, isApproved: true });
