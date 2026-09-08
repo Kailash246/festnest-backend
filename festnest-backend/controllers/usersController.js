@@ -89,7 +89,21 @@ export const myPoints = asyncHandler(async (req, res) => {
 
 export const myHostedEvents = asyncHandler(async (req, res) => {
   const hosted = await HostedEvent.find({ submittedBy: req.user._id })
-    .populate('linkedEvent', 'name slug _id isActive')
+    .populate('linkedEvent', 'name slug _id isActive stats category date price image competitions')
     .sort({ createdAt: -1 }).lean();
-  return ok(res, { hostedEvents: hosted });
+
+  const linkedEventIds = hosted
+    .map(h => h.linkedEvent?._id || (typeof h.linkedEvent === 'string' ? h.linkedEvent : null))
+    .filter(Boolean);
+
+  let registrations = [];
+  if (linkedEventIds.length > 0) {
+    registrations = await Registration.find({ event: { $in: linkedEventIds } })
+      .populate('user', 'name email college phone avatar')
+      .populate('event', 'name slug')
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  return ok(res, { hostedEvents: hosted, registrations });
 });
