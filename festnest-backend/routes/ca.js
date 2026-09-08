@@ -16,3 +16,5 @@ router.get('/card/:caId', getPublicCard);
 
 export default router;
 
+export * from './campusAmbassador.js';
+export { default } from './campusAmbassador.js';

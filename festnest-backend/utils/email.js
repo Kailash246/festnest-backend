@@ -223,3 +223,69 @@ export async function sendRegistrationConfirmEmail(email, userName, eventName, e
 </html>`;
   return sendMail({ to: email, subject: `Registered for ${eventName} 🎉`, html });
 }
+
+/* ── Campus Ambassador Approval Email ── */
+export async function sendAmbassadorApprovedEmail({ email, name, caId, referralCode }) {
+  const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
+  const dashboardUrl = `${clientUrl}/ca/dashboard`;
+  const referralUrl = `${clientUrl}?ref=${referralCode}`;
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:'DM Sans',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0;">
+    <tr><td align="center">
+      <table width="500" cellpadding="0" cellspacing="0"
+             style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#4F46E5,#9333EA);padding:32px;text-align:center;">
+            <div style="font-size:36px;margin-bottom:8px;">🎓</div>
+            <div style="color:#fff;font-size:22px;font-weight:700;">Welcome to the Team, ${name}!</div>
+            <div style="color:#C7D2FE;font-size:13px;margin-top:4px;">Official FestNest Campus Ambassador</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:36px;">
+            <p style="font-size:15px;color:#374151;margin:0 0 16px;">Hey ${name} 🎉</p>
+            <p style="font-size:15px;color:#374151;margin:0 0 24px;line-height:1.6;">
+              Congratulations! Your application to become a <strong>FestNest Campus Ambassador</strong> has been approved. Your official credentials and referral link are now active.
+            </p>
+
+            <div style="background:#F0F4FF;border:1.5px solid #C7D2FE;border-radius:12px;padding:20px;margin-bottom:24px;">
+              <div style="font-size:12px;color:#4F46E5;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Official Ambassador ID</div>
+              <div style="font-size:24px;font-weight:800;color:#1E1B4B;font-family:monospace;letter-spacing:1px;margin-bottom:12px;">${caId}</div>
+              <div style="font-size:12px;color:#4F46E5;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Your Referral Code</div>
+              <div style="font-size:20px;font-weight:800;color:#4F46E5;font-family:monospace;">${referralCode}</div>
+            </div>
+
+            <p style="font-size:14px;color:#4B5563;margin:0 0 24px;line-height:1.6;">
+              Share your link with club leads, fest heads, and student organizers in your college:
+              <br/>
+              <a href="${referralUrl}" style="color:#4F46E5;font-weight:600;word-break:break-all;">${referralUrl}</a>
+            </p>
+
+            <div style="text-align:center;margin:32px 0;">
+              <a href="${dashboardUrl}" style="background:#4F46E5;color:#ffffff;padding:14px 28px;border-radius:10px;font-size:14px;font-weight:700;text-decoration:none;display:inline-block;">
+                Open Ambassador Dashboard →
+              </a>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="background:#F9FAFB;padding:20px 36px;border-top:1px solid #E5E7EB;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#9CA3AF;">© ${new Date().getFullYear()} FestNest · Campus Ambassador Program</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  return sendMail({
+    to: email,
+    subject: `You're an official FestNest Campus Ambassador! (${caId}) 🎉`,
+    html,
+  });
+}

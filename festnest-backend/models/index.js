@@ -154,3 +154,5 @@ const collegeSchema = new mongoose.Schema(
 );
 collegeSchema.index({ name: 'text', city: 'text' });
 export const College = mongoose.model('College', collegeSchema);
+
+export { CampusAmbassador } from './CampusAmbassador.js';

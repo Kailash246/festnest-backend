@@ -4,6 +4,8 @@ import User from '../models/User.js';
 import { HostedEvent } from '../models/index.js';
 import Event from '../models/Event.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
+import { uploadAmbassadorPhoto } from '../config/cloudinary.js';
+import { sendAmbassadorApprovedEmail } from '../utils/email.js';
 
 /* ── Standard Launch City Mapping ── */
 const CITY_CODES = {
@@ -26,6 +28,14 @@ const CITY_CODES = {
   kochi:         'COK',
   coimbatore:    'CJB',
   lucknow:       'LKO',
+  bhopal:        'BHO',
+  indore:        'IDR',
+  patna:         'PAT',
+  nagpur:        'NAG',
+  surat:         'SUR',
+  vadodara:      'BDQ',
+  visakhapatnam: 'VTZ',
+  thiruvananthapuram: 'TRV',
 };
 
 export function getCityCode(cityName) {
@@ -44,10 +54,16 @@ export function getCityCode(cityName) {
  * Silver: 3–7
  * Gold: 8–14
  * City Lead: 15+
+ * Single centralized tier threshold helper:
+ * 0-2: Bronze
+ * 3-7: Silver
+ * 8-15: Gold
+ * 16+: City Lead
  */
 export function calculateTier(organizersCount) {
   const count = Number(organizersCount) || 0;
   if (count >= 15) return 'City Lead';
+  if (count >= 16) return 'City Lead';
   if (count >= 8)  return 'Gold';
   if (count >= 3)  return 'Silver';
   return 'Bronze';
@@ -113,11 +129,14 @@ export async function computeImpactStats(ca) {
 /* ────────────────────────────────────────────────────────
    POST /api/ca/apply
    Public application submission
+   Public application submission with optional photo upload
 ──────────────────────────────────────────────────────── */
 export const apply = asyncHandler(async (req, res) => {
   const {
     name, email, phone, city, college, course, year = '',
     instagram = '', why, referral = '',
+    name, email, phone, city, college, course, why,
+    instagram = '', referral = '', referralCodeUsed = '',
   } = req.body;
 
   // Basic validation
@@ -136,8 +155,10 @@ export const apply = asyncHandler(async (req, res) => {
   const cityCode   = getCityCode(city);
 
   // Multi-vector duplicate application check across active states
+  // Check for duplicate active applications
   const duplicateQuery = {
     status: { $in: ['applied', 'screening', 'approved'] },
+    status: { $in: ['applied', 'approved'] },
     $or: [
       { email: cleanEmail },
       { phone: cleanPhone },
@@ -161,12 +182,27 @@ export const apply = asyncHandler(async (req, res) => {
     );
   }
 
+  // Handle optional photo upload via Cloudinary
+  let photoUrl = null;
+  if (req.file) {
+    try {
+      const uploadRes = await uploadAmbassadorPhoto(req.file.buffer);
+      photoUrl = uploadRes.secure_url;
+    } catch (err) {
+      console.error('[Cloudinary Photo Upload Error]', err.message);
+    }
+  } else if (req.body.photoUrl) {
+    photoUrl = req.body.photoUrl;
+  }
+
   // Link userId if logged in or if a user exists with this email
   let userId = req.user?._id || null;
   if (!userId) {
     const matchingUser = await User.findOne({ email: cleanEmail }).select('_id').lean();
     if (matchingUser) userId = matchingUser._id;
   }
+
+  const codeUsed = (referralCodeUsed || referral || '').trim().toUpperCase();
 
   const ca = await CampusAmbassador.create({
     userId,
@@ -181,6 +217,9 @@ export const apply = asyncHandler(async (req, res) => {
     instagram: instagram.trim(),
     why: why.trim(),
     referredByCode: referral.trim().toUpperCase(),
+    referralCodeUsed: codeUsed,
+    referredByCode: codeUsed,
+    photoUrl,
     status: 'applied',
     tier: 'Bronze',
     auditLog: [
@@ -192,6 +231,11 @@ export const apply = asyncHandler(async (req, res) => {
         notes: 'Application submitted via web form',
       },
     ],
+    stats: {
+      organizersOnboarded: 0,
+      eventsSourced: 0,
+    },
+    appliedAt: new Date(),
   });
 
   return created(
@@ -208,32 +252,200 @@ export const apply = asyncHandler(async (req, res) => {
 /* ────────────────────────────────────────────────────────
    GET /api/ca/me
    Authenticated ambassador dashboard info & live metrics
+   GET /api/ca/applications (Admin-protected)
+   List applications with status filter, search, & counts
 ──────────────────────────────────────────────────────── */
 export const getMyProfile = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const userEmail = req.user.email.toLowerCase();
+export const listApplications = asyncHandler(async (req, res) => {
+  const { status, q, sort = 'newest', page = 1, limit = 50 } = req.query;
 
   const ca = await CampusAmbassador.findOne({
     $or: [{ userId }, { email: userEmail }],
   }).sort({ createdAt: -1 });
+  const filter = {};
+  if (status && status !== 'all') {
+    filter.status = status;
+  }
 
   if (!ca) {
     return ok(res, { profile: null, status: 'unapplied' }, 'No ambassador profile found');
+  if (q && q.trim()) {
+    const rx = new RegExp(q.trim(), 'i');
+    filter.$or = [
+      { name: rx },
+      { college: rx },
+      { city: rx },
+      { email: rx },
+      { caId: rx },
+      { referralCode: rx },
+    ];
   }
 
   // If approved, calculate live derived platform stats and current tier
+  let sortCriteria = { createdAt: -1 };
+  if (sort === 'oldest') sortCriteria = { createdAt: 1 };
+  if (sort === 'name') sortCriteria = { name: 1 };
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
+  const skip = (pageNum - 1) * limitNum;
+
+  const [ambassadors, total, counts] = await Promise.all([
+    CampusAmbassador.find(filter)
+      .sort(sortCriteria)
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    CampusAmbassador.countDocuments(filter),
+    Promise.all([
+      CampusAmbassador.countDocuments({}),
+      CampusAmbassador.countDocuments({ status: 'applied' }),
+      CampusAmbassador.countDocuments({ status: 'approved' }),
+      CampusAmbassador.countDocuments({ status: 'rejected' }),
+    ]).then(([all, applied, approved, rejected]) => ({
+      all,
+      applied,
+      pending: applied,
+      approved,
+      rejected,
+    })),
+  ]);
+
+  return ok(res, {
+    ambassadors,
+    applications: ambassadors, // alias for flexible consumption
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum) || 1,
+    counts,
+  });
+});
+
+/* ────────────────────────────────────────────────────────
+   POST /api/ca/:id/approve (Admin-protected)
+   Generates caId + referralCode, sets status/approvedAt, sends email
+──────────────────────────────────────────────────────── */
+export const approveApplication = asyncHandler(async (req, res) => {
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
   if (ca.status === 'approved') {
     const stats = await computeImpactStats(ca);
+    return fail(res, 'This applicant has already been approved');
+  }
 
     // Auto-update tier if it progressed and wasn't manually altered
     if (stats.tier !== ca.tier) {
       ca.tier = stats.tier;
+  const cityCode = ca.cityCode || getCityCode(ca.city);
+  ca.cityCode = cityCode;
+
+  // Generate sequential caId and referralCode: FN-CA-{CITYCODE}-{seq}
+  const cityCount = await CampusAmbassador.countDocuments({
+    cityCode,
+    status: 'approved',
+    _id: { $ne: ca._id },
+  });
+  const seq = cityCount + 1;
+  const caId = `FN-CA-${cityCode}-${String(seq).padStart(3, '0')}`;
+  const referralCode = `FN-${cityCode}-${String(seq).padStart(3, '0')}`;
+
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const year = now.getFullYear() + 2; // 2 years validity
+  const validThru = `${month} / ${year}`;
+
+  ca.caId = caId;
+  ca.referralCode = referralCode;
+  ca.validThru = validThru;
+  ca.status = 'approved';
+  ca.approvedAt = now;
+  ca.rejectedAt = null;
+  ca.rejectionReason = '';
+
+  // Calculate tier based on current organizers onboarded
+  ca.tier = calculateTier(ca.stats?.organizersOnboarded || 0);
+
+  // Link user if matching account exists
+  if (!ca.userId) {
+    const user = await User.findOne({ email: ca.email }).select('_id').lean();
+    if (user) ca.userId = user._id;
+  }
+
+  await ca.save();
+
+  // Send approval email via Resend helper (non-blocking)
+  sendAmbassadorApprovedEmail({
+    email: ca.email,
+    name: ca.name,
+    caId,
+    referralCode,
+  }).catch(err => {
+    console.error('[CA Approval Email Error]', err.message);
+  });
+
+  return ok(
+    res,
+    {
+      ambassador: ca,
+      caId,
+      referralCode,
+    },
+    `Approved ${ca.name}! Official ID: ${caId}`
+  );
+});
+
+/* ────────────────────────────────────────────────────────
+   POST /api/ca/:id/reject (Admin-protected)
+   Sets status/rejectedAt
+──────────────────────────────────────────────────────── */
+export const rejectApplication = asyncHandler(async (req, res) => {
+  const { reason = 'Application does not meet current criteria' } = req.body;
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador application not found');
+
+  if (ca.status === 'rejected') {
+    return fail(res, 'This applicant has already been rejected');
+  }
+
+  const now = new Date();
+  ca.status = 'rejected';
+  ca.rejectedAt = now;
+  ca.rejectionReason = reason;
+
+  await ca.save();
+  return ok(res, { ambassador: ca }, 'Application rejected');
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/me (Auth-protected)
+   Look up by userId, else by email match (auto-link userId), else 404
+──────────────────────────────────────────────────────── */
+export const getMyProfile = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const userEmail = req.user.email?.toLowerCase();
+
+  // 1. Look up by userId
+  let ca = await CampusAmbassador.findOne({ userId }).sort({ createdAt: -1 });
+
+  // 2. Fall back to email match and auto-link userId on first match
+  if (!ca && userEmail) {
+    ca = await CampusAmbassador.findOne({ email: userEmail }).sort({ createdAt: -1 });
+    if (ca && !ca.userId) {
+      ca.userId = userId;
       await ca.save();
     }
+  }
 
     // Generate referral link base
     const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
     const referralUrl = `${clientUrl}?ref=${ca.referralCode}`;
+  // 3. Else 404
+  if (!ca) {
+    return notFoundRes(res, 'No campus ambassador record found for your account');
+  }
 
     return ok(res, {
       profile: {
@@ -254,19 +466,37 @@ export const getMyProfile = asyncHandler(async (req, res) => {
         stats,
       },
     });
+  // Ensure tier matches live stats
+  const calculatedTier = calculateTier(ca.stats?.organizersOnboarded || 0);
+  if (ca.tier !== calculatedTier) {
+    ca.tier = calculatedTier;
+    await ca.save();
   }
 
   // Pending / screening / rejected states: return safe tracking info
+  const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
+  const referralUrl = ca.referralCode ? `${clientUrl}?ref=${ca.referralCode}` : '';
+
   return ok(res, {
     profile: {
       _id: ca._id,
       name: ca.name,
       email: ca.email,
+      phone: ca.phone,
       college: ca.college,
       city: ca.city,
       course: ca.course,
+      caId: ca.caId,
+      referralCode: ca.referralCode,
+      referralUrl,
       status: ca.status,
       createdAt: ca.createdAt,
+      tier: ca.tier,
+      photoUrl: ca.photoUrl,
+      validThru: ca.validThru,
+      appliedAt: ca.appliedAt,
+      approvedAt: ca.approvedAt,
+      stats: ca.stats || { organizersOnboarded: 0, eventsSourced: 0 },
       rejectionReason: ca.status === 'rejected' ? ca.rejectionReason : undefined,
     },
   });
@@ -275,6 +505,7 @@ export const getMyProfile = asyncHandler(async (req, res) => {
 /* ────────────────────────────────────────────────────────
    GET /api/ca/card/:caId
    Public verification endpoint (safe fields only)
+   GET /api/ca/card/:caId (Public verification endpoint)
 ──────────────────────────────────────────────────────── */
 export const getPublicCard = asyncHandler(async (req, res) => {
   const rawId = req.params.caId.trim();
@@ -301,6 +532,7 @@ export const getPublicCard = asyncHandler(async (req, res) => {
       validThru: ca.validThru,
       approvedAt: ca.approvedAt,
       status: ca.status,
+      photoUrl: ca.photoUrl,
     },
   });
 });

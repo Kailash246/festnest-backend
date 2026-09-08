@@ -97,5 +97,29 @@ export async function uploadBrochure(buffer) {
   });
 }
 
+/* ── Multer: Campus Ambassador photo (5 MB) ─────────────── */
+export const uploadCAPhoto = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!IMAGE_MIME.has(file.mimetype) || !IMAGE_EXT.has(ext)) {
+      return cb(Object.assign(
+        new Error('Photo must be a JPG, JPEG, PNG or WEBP image (max 5 MB)'),
+        { status: 400 }
+      ));
+    }
+    cb(null, true);
+  },
+}).single('photo');
+
+export async function uploadAmbassadorPhoto(buffer) {
+  return uploadToCloudinary(buffer, {
+    folder:          'festnest/ca',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    transformation:  [{ width: 600, height: 600, crop: 'fill', gravity: 'face', quality: 'auto' }],
+  });
+}
+
 export { cloudinary };
 export default cloudinary;

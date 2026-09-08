@@ -20,6 +20,7 @@ import supportRoutes     from './routes/support.js';
 import adminRoutes       from './routes/admin.js';
 import sitemapRoutes     from './routes/sitemap.js';
 import caRoutes          from './routes/ca.js';
+import caRoutes          from './routes/campusAmbassador.js';
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();

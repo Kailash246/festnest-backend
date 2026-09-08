@@ -4,6 +4,8 @@ import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
+import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador } from '../models/index.js';
+import { calculateTier } from './caController.js';
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
 import { sendRegistrationConfirmEmail } from '../utils/email.js';
@@ -740,6 +742,29 @@ export const hostEvent = asyncHandler(async (req, res) => {
   // Award host points
   await PointsLog.create({ user: req.user._id, action: 'host', points: 300, description: `Submitted event: ${eventName}` });
   await User.findByIdAndUpdate(req.user._id, { $inc: { points: 300 } });
+
+  // Campus Ambassador referral attribution hook
+  const referredByCode = (req.body.referredByCode || '').trim().toUpperCase();
+  if (referredByCode) {
+    try {
+      const ca = await CampusAmbassador.findOne({ referralCode: referredByCode });
+      if (ca && ca.status === 'approved') {
+        const organizerIdStr = String(req.user._id);
+        const alreadyCounted = (ca.referredOrganizerIds || []).some(id => String(id) === organizerIdStr);
+        if (!alreadyCounted) {
+          ca.referredOrganizerIds = ca.referredOrganizerIds || [];
+          ca.referredOrganizerIds.push(req.user._id);
+          ca.stats = ca.stats || { organizersOnboarded: 0, eventsSourced: 0 };
+          ca.stats.organizersOnboarded = (ca.stats.organizersOnboarded || 0) + 1;
+          ca.tier = calculateTier(ca.stats.organizersOnboarded);
+          await ca.save();
+        }
+      }
+    } catch (caErr) {
+      console.error('[CA Referral Attribution Error]', caErr.message);
+      // must never affect event creation response
+    }
+  }
 
   return created(res, { hostedEvent: hosted, pointsEarned: 300 }, 'Event submitted for review');
 });

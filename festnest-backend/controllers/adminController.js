@@ -6,6 +6,7 @@ import { HostedEvent, Notification, Registration, SavedEvent,
          SupportTicket, PointsLog, College } from '../models/index.js';
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail }       from '../utils/email.js';
+import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
 /* ═══════════════════════════════════════════════════════════
@@ -716,6 +717,16 @@ export const approveAmbassador = asyncHandler(async (req, res) => {
   });
 
   await ca.save();
+
+  sendAmbassadorApprovedEmail({
+    email: ca.email,
+    name: ca.name,
+    caId,
+    referralCode,
+  }).catch(err => {
+    console.error('[Admin CA Approval Email Error]', err.message);
+  });
+
   return ok(res, { ambassador: ca }, `Approved ${ca.name} with ID ${caId}`);
 });
 
