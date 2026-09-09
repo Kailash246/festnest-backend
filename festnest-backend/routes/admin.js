@@ -12,6 +12,7 @@ import {
   broadcastNotification,
   listAmbassadors, getAmbassador, approveAmbassador, rejectAmbassador,
   updateAmbassadorStatus, adjustAmbassadorStats,
+  listFeedback, getFeedback, deleteFeedback,
 } from '../controllers/adminController.js';
 import {
   validate, validateAdminCreateEvent, validateAdjustPoints,
@@ -69,4 +70,10 @@ router.patch('/ca/:id/reject',  rejectAmbassador);
 router.patch('/ca/:id/status',  updateAmbassadorStatus);
 router.patch('/ca/:id/adjust',  adjustAmbassadorStats);
 
+/* ── User Feedback ── */
+router.get('/feedback',         listFeedback);
+router.get('/feedback/:id',     getFeedback);
+router.delete('/feedback/:id',  deleteFeedback);
+
 export default router;
+

@@ -3,7 +3,7 @@ import Event      from '../models/Event.js';
 import User       from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
-         SupportTicket, PointsLog, College } from '../models/index.js';
+         SupportTicket, PointsLog, College, Feedback } from '../models/index.js';
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
@@ -20,6 +20,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
     pendingAmbassadors,
     totalRegistrations,
     openTickets,
+    totalFeedback,
     recentUsers,
     recentSubmissions,
   ] = await Promise.all([
@@ -29,6 +30,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
     CampusAmbassador.countDocuments({ status: { $in: ['applied', 'screening'] } }),
     Registration.countDocuments({}),
     SupportTicket.countDocuments({ status: 'open' }),
+    Feedback.countDocuments({}),
     User.find({ role: 'user' }).sort({ createdAt: -1 }).limit(5)
         .select('name email college createdAt').lean(),
     HostedEvent.find({ status: 'pending' }).sort({ createdAt: -1 }).limit(5)
@@ -54,7 +56,7 @@ export const getDashboardStats = asyncHandler(async (_req, res) => {
   ]);
 
   return ok(res, {
-    totals: { totalUsers, totalEvents, pendingSubmissions, pendingAmbassadors, totalRegistrations, openTickets },
+    totals: { totalUsers, totalEvents, pendingSubmissions, pendingAmbassadors, totalRegistrations, openTickets, totalFeedback },
     categoryBreakdown,
     registrationsTrend,
     recentUsers,
@@ -821,5 +823,91 @@ export const adjustAmbassadorStats = asyncHandler(async (req, res) => {
 
   await ca.save();
   return ok(res, { ambassador: ca, stats: live }, 'Ambassador metrics updated with audit record');
+});
+
+/* ═══════════════════════════════════════════════════════════
+   USER FEEDBACK MANAGEMENT
+═══════════════════════════════════════════════════════════ */
+
+/** GET /api/admin/feedback — List user feedback with filters, search, pagination, and counts */
+export const listFeedback = asyncHandler(async (req, res) => {
+  const { category, q, sort = 'newest', page = 1, limit = 20 } = req.query;
+
+  const filter = {};
+  if (category && category !== 'all') {
+    filter.category = category;
+  }
+
+  if (q && q.trim()) {
+    const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [
+      { message: rx },
+      { email: rx },
+      { page: rx },
+    ];
+  }
+
+  let sortCriteria = { createdAt: -1 };
+  if (sort === 'oldest') sortCriteria = { createdAt: 1 };
+  if (sort === 'rating_high') sortCriteria = { rating: -1, createdAt: -1 };
+  if (sort === 'rating_low') sortCriteria = { rating: 1, createdAt: -1 };
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const [feedback, total, counts] = await Promise.all([
+    Feedback.find(filter)
+      .populate('userId', 'name email role college')
+      .sort(sortCriteria)
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    Feedback.countDocuments(filter),
+    Promise.all([
+      Feedback.countDocuments({}),
+      Feedback.countDocuments({ category: 'bug' }),
+      Feedback.countDocuments({ category: 'ui_ux' }),
+      Feedback.countDocuments({ category: 'feature_request' }),
+      Feedback.countDocuments({ category: 'event_discovery' }),
+      Feedback.countDocuments({ category: 'suggestion' }),
+      Feedback.countDocuments({ category: 'other' }),
+    ]).then(([all, bug, ui_ux, feature_request, event_discovery, suggestion, other]) => ({
+      all,
+      bug,
+      ui_ux,
+      feature_request,
+      event_discovery,
+      suggestion,
+      other,
+    })),
+  ]);
+
+  return ok(res, {
+    feedback,
+    pagination: {
+      total,
+      page: pageNum,
+      limit: limitNum,
+      pages: Math.ceil(total / limitNum) || 1,
+    },
+    counts,
+  });
+});
+
+/** GET /api/admin/feedback/:id — Single feedback detail */
+export const getFeedback = asyncHandler(async (req, res) => {
+  const item = await Feedback.findById(req.params.id)
+    .populate('userId', 'name email role college')
+    .lean();
+  if (!item) return notFoundRes(res, 'Feedback not found');
+  return ok(res, { feedback: item });
+});
+
+/** DELETE /api/admin/feedback/:id — Delete feedback entry */
+export const deleteFeedback = asyncHandler(async (req, res) => {
+  const item = await Feedback.findByIdAndDelete(req.params.id);
+  if (!item) return notFoundRes(res, 'Feedback not found');
+  return ok(res, {}, 'Feedback entry deleted');
 });
 
