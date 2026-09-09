@@ -3,7 +3,6 @@ import mongoose     from 'mongoose';
 import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
-import { SavedEvent, Registration, Notification, PointsLog, HostedEvent } from '../models/index.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador } from '../models/index.js';
 import { calculateTier } from './caController.js';
 import User         from '../models/User.js';

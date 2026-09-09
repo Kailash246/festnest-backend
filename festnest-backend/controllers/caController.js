@@ -134,9 +134,7 @@ export async function computeImpactStats(ca) {
 export const apply = asyncHandler(async (req, res) => {
   const {
     name, email, phone, city, college, course, year = '',
-    instagram = '', why, referral = '',
-    name, email, phone, city, college, course, why,
-    instagram = '', referral = '', referralCodeUsed = '',
+    instagram = '', why, referral = '', referralCodeUsed = '',
   } = req.body;
 
   // Basic validation
@@ -250,27 +248,16 @@ export const apply = asyncHandler(async (req, res) => {
 });
 
 /* ────────────────────────────────────────────────────────
-   GET /api/ca/me
-   Authenticated ambassador dashboard info & live metrics
    GET /api/ca/applications (Admin-protected)
    List applications with status filter, search, & counts
 ──────────────────────────────────────────────────────── */
-export const getMyProfile = asyncHandler(async (req, res) => {
-  const userId = req.user._id;
-  const userEmail = req.user.email.toLowerCase();
 export const listApplications = asyncHandler(async (req, res) => {
   const { status, q, sort = 'newest', page = 1, limit = 50 } = req.query;
 
-  const ca = await CampusAmbassador.findOne({
-    $or: [{ userId }, { email: userEmail }],
-  }).sort({ createdAt: -1 });
   const filter = {};
   if (status && status !== 'all') {
     filter.status = status;
   }
-
-  if (!ca) {
-    return ok(res, { profile: null, status: 'unapplied' }, 'No ambassador profile found');
   if (q && q.trim()) {
     const rx = new RegExp(q.trim(), 'i');
     filter.$or = [
@@ -283,7 +270,6 @@ export const listApplications = asyncHandler(async (req, res) => {
     ];
   }
 
-  // If approved, calculate live derived platform stats and current tier
   let sortCriteria = { createdAt: -1 };
   if (sort === 'oldest') sortCriteria = { createdAt: 1 };
   if (sort === 'name') sortCriteria = { name: 1 };
@@ -315,7 +301,7 @@ export const listApplications = asyncHandler(async (req, res) => {
 
   return ok(res, {
     ambassadors,
-    applications: ambassadors, // alias for flexible consumption
+    applications: ambassadors,
     total,
     page: pageNum,
     pages: Math.ceil(total / limitNum) || 1,
@@ -332,13 +318,9 @@ export const approveApplication = asyncHandler(async (req, res) => {
   if (!ca) return notFoundRes(res, 'Ambassador application not found');
 
   if (ca.status === 'approved') {
-    const stats = await computeImpactStats(ca);
     return fail(res, 'This applicant has already been approved');
   }
 
-    // Auto-update tier if it progressed and wasn't manually altered
-    if (stats.tier !== ca.tier) {
-      ca.tier = stats.tier;
   const cityCode = ca.cityCode || getCityCode(ca.city);
   ca.cityCode = cityCode;
 
@@ -439,33 +421,11 @@ export const getMyProfile = asyncHandler(async (req, res) => {
     }
   }
 
-    // Generate referral link base
-    const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
-    const referralUrl = `${clientUrl}?ref=${ca.referralCode}`;
   // 3. Else 404
   if (!ca) {
     return notFoundRes(res, 'No campus ambassador record found for your account');
   }
 
-    return ok(res, {
-      profile: {
-        _id: ca._id,
-        name: ca.name,
-        email: ca.email,
-        phone: ca.phone,
-        college: ca.college,
-        city: ca.city,
-        course: ca.course,
-        caId: ca.caId,
-        referralCode: ca.referralCode,
-        referralUrl,
-        status: ca.status,
-        tier: ca.tier,
-        validThru: ca.validThru,
-        approvedAt: ca.approvedAt,
-        stats,
-      },
-    });
   // Ensure tier matches live stats
   const calculatedTier = calculateTier(ca.stats?.organizersOnboarded || 0);
   if (ca.tier !== calculatedTier) {

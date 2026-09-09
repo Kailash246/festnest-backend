@@ -5,7 +5,6 @@ import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
          SupportTicket, PointsLog, College } from '../models/index.js';
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
-import { sendMail }       from '../utils/email.js';
 import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
