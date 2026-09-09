@@ -22,6 +22,7 @@ import sitemapRoutes     from './routes/sitemap.js';
 import caRoutes          from './routes/ca.js';
 import caAdminRoutes     from './routes/campusAmbassador.js';
 import feedbackRoutes    from './routes/feedback.js';
+import aiRoutes          from './routes/ai.js';
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();
@@ -158,6 +159,7 @@ app.use('/api/college',       collegeRoutes);
 app.use('/api/support',       supportRoutes);
 app.use('/api/admin',         adminRoutes);
 app.use('/api/ca',            caRoutes);
+app.use('/api/ai',            aiRoutes);
 
 /* ── Feedback rate limiter (5 submissions / 15 min per IP) ── */
 const feedbackLimiter = rateLimit({
