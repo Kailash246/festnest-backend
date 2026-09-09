@@ -304,3 +304,29 @@ export const validateBroadcast = [
     .optional()
     .isArray().withMessage('userIds must be an array'),
 ];
+
+/* ── Feedback ─────────────────────────────────────────── */
+export const validateSubmitFeedback = [
+  body('category')
+    .trim()
+    .isIn(['bug', 'ui_ux', 'feature_request', 'event_discovery', 'suggestion', 'other'])
+    .withMessage('Please select a feedback category'),
+  body('message')
+    .trim()
+    .isLength({ min: 10, max: 2000 })
+    .withMessage('Feedback must be between 10 and 2000 characters'),
+  body('email')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isEmail()
+    .withMessage('Please enter a valid email address'),
+  body('rating')
+    .optional({ nullable: true })
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Rating must be between 1 and 5'),
+  body('page')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Page reference must not exceed 200 characters'),
+];
+

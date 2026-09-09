@@ -20,7 +20,8 @@ import supportRoutes     from './routes/support.js';
 import adminRoutes       from './routes/admin.js';
 import sitemapRoutes     from './routes/sitemap.js';
 import caRoutes          from './routes/ca.js';
-import caRoutes          from './routes/campusAmbassador.js';
+import caAdminRoutes     from './routes/campusAmbassador.js';
+import feedbackRoutes    from './routes/feedback.js';
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();
@@ -157,6 +158,16 @@ app.use('/api/college',       collegeRoutes);
 app.use('/api/support',       supportRoutes);
 app.use('/api/admin',         adminRoutes);
 app.use('/api/ca',            caRoutes);
+
+/* ── Feedback rate limiter (5 submissions / 15 min per IP) ── */
+const feedbackLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { success: false, message: `You've sent too much feedback recently. Please try again in a few minutes.` },
+});
+app.use('/api/feedback', feedbackLimiter, feedbackRoutes);
 
 /* ── Error handling (must be last) ── */
 app.use(notFound);

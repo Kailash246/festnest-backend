@@ -155,4 +155,27 @@ const collegeSchema = new mongoose.Schema(
 collegeSchema.index({ name: 'text', city: 'text' });
 export const College = mongoose.model('College', collegeSchema);
 
+// ─────────────────────────────────────────────────
+
+// models/Feedback.js
+const feedbackSchema = new mongoose.Schema(
+  {
+    category:  {
+      type: String,
+      enum: ['bug', 'ui_ux', 'feature_request', 'event_discovery', 'suggestion', 'other'],
+      required: true,
+    },
+    message:   { type: String, required: true, minlength: 10, maxlength: 2000 },
+    email:     { type: String, default: '', lowercase: true, trim: true },
+    rating:    { type: Number, min: 1, max: 5, default: null },
+    page:      { type: String, default: '' },
+    userId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    userAgent: { type: String, default: '' },
+  },
+  { timestamps: true }
+);
+feedbackSchema.index({ category: 1 });
+feedbackSchema.index({ createdAt: -1 });
+export const Feedback = mongoose.model('Feedback', feedbackSchema);
+
 export { CampusAmbassador } from './CampusAmbassador.js';
