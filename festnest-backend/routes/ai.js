@@ -289,7 +289,6 @@ function validateAndNormalizeData(raw) {
           const venuePlatform = cleanStr(sub.venuePlatform || sub.venue);
           const teamSize = cleanStr(sub.teamSize);
           const eligibility = cleanStr(sub.eligibility);
-          const durationRounds = cleanStr(sub.durationRounds || sub.duration);
           const durationRounds = truncateAtWordBoundary(cleanStr(sub.durationRounds || sub.duration), 200);
           const registrationLink = cleanStr(sub.registrationLink);
           const description = cleanStr(sub.description);
@@ -492,6 +491,8 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     const isSubEventBulk = context === 'sub-event-bulk';
     const isSubEvent = context === 'sub-event';
 
+    console.log(`[AI parse-event-poster] Incoming request: file="${file.originalname || 'upload.pdf'}", size=${file.buffer.length} bytes, pages=${pageCount}, context="${context}"`);
+
     let activePrompt;
     if (isSubEventBulk) {
       activePrompt = SUB_EVENT_BULK_EXTRACTION_PROMPT;
@@ -503,8 +504,9 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
 
     // Convert PDF pages to PNG image buffers using pdf-to-img
     const imageParts = [];
-    const doc = await pdf(file.buffer);
+    let doc;
     try {
+      doc = await pdf(file.buffer);
       for await (const page of doc) {
         imageParts.push({
           inlineData: {
@@ -513,27 +515,38 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
           },
         });
       }
+      console.log(`[AI parse-event-poster] PDF-to-image conversion succeeded: ${imageParts.length} page images extracted`);
+    } catch (pdfImgErr) {
+      console.error('[AI parse-event-poster] PDF-to-image conversion FAILED:', pdfImgErr.message || pdfImgErr);
+      throw pdfImgErr;
     } finally {
-      if (typeof doc.destroy === 'function') {
+      if (doc && typeof doc.destroy === 'function') {
         await doc.destroy();
       }
     }
 
     if (imageParts.length === 0) {
+      console.error('[AI parse-event-poster] No page images extracted from PDF');
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     }
 
     // Call Gemini with all page images in a single request
     let rawText;
     try {
+      console.log(`[AI parse-event-poster] Sending ${imageParts.length} image(s) to Gemini (context: "${context}")...`);
       rawText = await extractEventWithGemini(apiKey, imageParts, activePrompt);
     } catch (geminiErr) {
-      console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message);
+      console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message, geminiErr);
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
       });
     }
+
+    console.log('[AI parse-event-poster] Raw Gemini response text:');
+    console.log('--- START RAW GEMINI OUTPUT ---');
+    console.log(rawText);
+    console.log('--- END RAW GEMINI OUTPUT ---');
 
     // Parse and validate the response
     let parsedData;
@@ -543,8 +556,10 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
         cleanText = cleanText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
       }
       parsedData = JSON.parse(cleanText);
+      console.log('[AI parse-event-poster] JSON.parse succeeded. Top-level type/keys:', typeof parsedData, Array.isArray(parsedData) ? `array of ${parsedData.length}` : Object.keys(parsedData || {}));
     } catch (parseErr) {
       console.error('[AI parse-event-poster JSON Parse Error]:', parseErr.message);
+      console.error('[AI parse-event-poster Failed rawText snippet]:', (rawText || '').slice(0, 500));
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
@@ -560,8 +575,10 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       } else {
         validatedData = validateAndNormalizeData(parsedData);
       }
+      console.log(`[AI parse-event-poster] Normalization succeeded for context "${context}".`);
     } catch (validationErr) {
       console.error('[AI parse-event-poster Validation Error]:', validationErr.message);
+      console.error('[AI parse-event-poster Validation Stack]:', validationErr.stack);
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
