@@ -14,6 +14,7 @@ const competitionSchema = new mongoose.Schema(
     teamSize:         { type: String, default: '', trim: true, maxlength: 80 },
     format:           { type: String, default: '', trim: true, maxlength: 120 },
     duration:         { type: String, default: '', trim: true, maxlength: 120 },
+    duration:         { type: String, default: '', trim: true, maxlength: 200 },
     rules:            { type: String, default: '', trim: true, maxlength: 1500 },
     registrationLink: { type: String, default: '', trim: true, maxlength: 500 },
   },

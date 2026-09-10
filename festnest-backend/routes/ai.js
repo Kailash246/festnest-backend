@@ -140,6 +140,8 @@ STRICT EXTRACTION RULES:
    - Do NOT invent eligibility rules. If missing, return null.
 10. "durationRounds":
     - Extract explicitly stated time limit, schedule duration, or round details (e.g. "24 Hours", "2 Rounds: Prelims (1 hr) + Finals (3 hrs)").
+    - Summarize duration/rounds concisely in under 150 characters — e.g. "Round 1: Online submission, Round 2: Live judging" rather than reproducing the poster's full paragraph.
+    - Prioritize round count and format over exact task details.
     - Do NOT infer duration or rounds when not explicitly stated. If missing, return null.
 11. "description":
     - Extract a clear summary of the competition track challenge, problem statement, or objective as stated in the flyer.
@@ -185,6 +187,7 @@ STRICT EXTRACTION RULES:
    - "teamSize": Explicitly stated team composition or size (e.g. "1-4 members", "Individual", "2-3 participants"). If missing, null.
    - "eligibility": Explicitly stated eligibility criteria (e.g. "Open to all UG students", "Engineering students only"). If missing, null.
    - "durationRounds": Explicitly stated time limit, schedule duration, or round details (e.g. "24 Hours", "2 Rounds: Prelims (1 hr) + Finals (3 hrs)"). If missing, null.
+   - "durationRounds": Summarize duration/rounds concisely in under 150 characters — e.g. "Round 1: Online submission, Round 2: Live judging" rather than reproducing the poster's full paragraph. Prioritize round count and format over exact task details. If missing, null.
    - "registrationLink": Explicit URL visible in the PDF for this competition (e.g. "https://...", "unstop.com/..."). NEVER fabricate or invent URLs. If no URL is visible, return null.
    - "description": Clear summary of this competition track challenge, problem statement, or objective as stated in the brochure. If missing, null.
    - "rulesGuidelines": Explicitly stated competition rules, constraints, judging criteria, or submission guidelines. If missing, null.
@@ -251,6 +254,21 @@ async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PR
 }
 
 /**
+ * Truncates text at the last full word under maxLength characters.
+ */
+function truncateAtWordBoundary(str, maxLength = 200) {
+  if (!str || typeof str !== 'string') return null;
+  const trimmed = str.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const truncated = trimmed.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace > 0) {
+    return truncated.slice(0, lastSpace).trim();
+  }
+  return truncated.trim();
+}
+
+/**
  * Validates, cleans, and normalizes AI output against logical schema and FestNest event fields.
  */
 function validateAndNormalizeData(raw) {
@@ -272,6 +290,7 @@ function validateAndNormalizeData(raw) {
           const teamSize = cleanStr(sub.teamSize);
           const eligibility = cleanStr(sub.eligibility);
           const durationRounds = cleanStr(sub.durationRounds || sub.duration);
+          const durationRounds = truncateAtWordBoundary(cleanStr(sub.durationRounds || sub.duration), 200);
           const registrationLink = cleanStr(sub.registrationLink);
           const description = cleanStr(sub.description);
           const rulesGuidelines = cleanStr(sub.rulesGuidelines || sub.rules);
@@ -379,6 +398,7 @@ function validateAndNormalizeSubEventData(raw) {
     teamSize: cleanStr(raw.teamSize),
     eligibility: cleanStr(raw.eligibility),
     durationRounds: cleanStr(raw.durationRounds),
+    durationRounds: truncateAtWordBoundary(cleanStr(raw.durationRounds), 200),
     registrationLink: cleanStr(raw.registrationLink),
     description: cleanStr(raw.description),
     rulesGuidelines: cleanStr(raw.rulesGuidelines),
@@ -405,6 +425,7 @@ function normalizeSubEventItem(item) {
     teamSize: cleanStr(item.teamSize),
     eligibility: cleanStr(item.eligibility),
     durationRounds: cleanStr(item.durationRounds || item.duration),
+    durationRounds: truncateAtWordBoundary(cleanStr(item.durationRounds || item.duration), 200),
     registrationLink: cleanStr(item.registrationLink || item.link || item.url),
     description: cleanStr(item.description),
     rulesGuidelines: cleanStr(item.rulesGuidelines || item.rules),
