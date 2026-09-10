@@ -21,6 +21,10 @@ const competitionFields = [
 
 const cleanCompetition = (input = {}) => Object.fromEntries(
   competitionFields.map(field => [field, clean(String(input[field] || '').slice(0, field === 'rules' ? 1500 : field === 'description' ? 1000 : 500))])
+  competitionFields.map(field => {
+    const max = field === 'rules' ? 1500 : field === 'description' ? 2000 : 500;
+    return [field, clean(String(input[field] || '').slice(0, max)).slice(0, max)];
+  })
 );
 
 const getOwnedEvent = async (slug, user) => {

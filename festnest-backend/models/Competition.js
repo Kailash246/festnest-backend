@@ -6,6 +6,7 @@ const competitionSchema = new mongoose.Schema(
     event:            { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true, index: true },
     name:             { type: String, required: true, trim: true, maxlength: 120 },
     description:      { type: String, default: '', trim: true, maxlength: 1000 },
+    description:      { type: String, default: '', trim: true, maxlength: 2000 },
     eligibility:      { type: String, default: '', trim: true, maxlength: 300 },
     registrationFee:  { type: String, default: '', trim: true, maxlength: 40 },
     prizeDetails:     { type: String, default: '', trim: true, maxlength: 300 },
