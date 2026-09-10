@@ -212,43 +212,100 @@ Return a JSON array of objects (or an object with a "tracks" array) where every 
   }
 ]`;
 
+export class HighDemandError extends Error {
+  constructor(message = 'FestNest AI is experiencing high demand right now — please wait a moment and try again') {
+    super(message);
+    this.name = 'HighDemandError';
+    this.status = 503;
+    this.isHighDemand = true;
+  }
+}
+
+export function isHighDemandError(err) {
+  const status = err?.status || err?.statusCode;
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    status === 503 ||
+    status === 429 ||
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('high demand') ||
+    msg.includes('service unavailable') ||
+    msg.includes('serviceunavailable') ||
+    msg.includes('resourceexhausted') ||
+    msg.includes('overloaded') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota')
+  );
+}
+
+export function isRetiredModelError(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    err?.status === 404 ||
+    msg.includes('404') ||
+    msg.includes('no longer available') ||
+    msg.includes('not found')
+  );
+}
+
 /**
- * Executes Gemini generation with requested model and automatic fallback
- * if the requested model is retired/unavailable.
+ * Executes Gemini generation with requested model, automatic retry-with-backoff on 503/429,
+ * and fallback to secondary model if primary model is unavailable or overloaded.
  */
-async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PROMPT) {
+export async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PROMPT) {
   const genAI = new GoogleGenerativeAI(apiKey);
   const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const fallbackModel = 'gemini-3.5-flash';
 
   const contents = [prompt, ...imageParts];
 
-  try {
+  const callModel = async (modelName) => {
     const model = genAI.getGenerativeModel({
-      model: primaryModel,
+      model: modelName,
       generationConfig: {
         responseMimeType: 'application/json',
       },
     });
     const result = await model.generateContent(contents);
     return result.response.text();
-  } catch (err) {
-    const isModelRetired =
-      err?.message?.includes('404') ||
-      err?.message?.includes('no longer available') ||
-      err?.message?.includes('not found');
+  };
 
-    if (isModelRetired && primaryModel !== fallbackModel) {
-      console.warn(`[AI Extraction] Model ${primaryModel} unavailable. Falling back to ${fallbackModel}.`);
-      const model = genAI.getGenerativeModel({
-        model: fallbackModel,
-        generationConfig: {
-          responseMimeType: 'application/json',
-        },
-      });
-      const result = await model.generateContent(contents);
-      return result.response.text();
+  try {
+    return await callModel(primaryModel);
+  } catch (err) {
+    if (isRetiredModelError(err) && primaryModel !== fallbackModel) {
+      console.warn(`[AI Extraction] Model ${primaryModel} retired/not found. Falling back to ${fallbackModel}.`);
+      return await callModel(fallbackModel);
     }
+
+    if (isHighDemandError(err)) {
+      console.warn(`[AI Extraction] Model ${primaryModel} reported high demand/rate limit (${err.message}). Waiting 2s before retry...`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      try {
+        console.log(`[AI Extraction] Retrying on ${primaryModel}...`);
+        return await callModel(primaryModel);
+      } catch (retryErr) {
+        console.warn(`[AI Extraction] Retry on ${primaryModel} failed: ${retryErr.message}`);
+
+        if (primaryModel !== fallbackModel) {
+          try {
+            console.log(`[AI Extraction] Falling back to ${fallbackModel}...`);
+            return await callModel(fallbackModel);
+          } catch (fallbackErr) {
+            console.error(`[AI Extraction] Fallback to ${fallbackModel} also failed: ${fallbackErr.message}`);
+            if (isHighDemandError(fallbackErr) || isHighDemandError(retryErr)) {
+              throw new HighDemandError();
+            }
+            throw fallbackErr;
+          }
+        }
+
+        throw new HighDemandError();
+      }
+    }
+
     throw err;
   }
 }
@@ -592,6 +649,12 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       rawText = await extractEventWithGemini(apiKey, imageParts, activePrompt);
     } catch (geminiErr) {
       console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message, geminiErr);
+      if (geminiErr.isHighDemand || isHighDemandError(geminiErr)) {
+        return res.status(503).json({
+          success: false,
+          message: 'FestNest AI is experiencing high demand right now — please wait a moment and try again',
+        });
+      }
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
