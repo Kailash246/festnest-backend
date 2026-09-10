@@ -111,16 +111,72 @@ Target JSON Structure:
   ]
 }`;
 
+const SUB_EVENT_EXTRACTION_PROMPT = `You are an expert event data extraction system for FestNest, a college event discovery platform.
+Analyze all provided page images of a competition track, sub-event poster, or contest flyer in order, and extract the details for this specific competition track.
+
+STRICT EXTRACTION RULES:
+1. NEVER guess or invent missing information. Extract ONLY facts explicitly stated in the provided images.
+2. Missing values MUST be null.
+3. "trackName": Extract the specific competition/track/contest name (e.g. "RoboWars", "HackAI", "Web3 Security Sprint", "Algorithmic Code Sprint").
+   - If the competition/track name is unclear or cannot be determined with certainty, "trackName" MUST be null.
+   - Do NOT confuse the overarching festival or college name with the specific competition track name.
+4. "registrationLink":
+   - ONLY populate when an actual, explicit URL (e.g. "https://...", "http://...", "unstop.com/...", "forms.gle/...") is clearly visible in the uploaded PDF.
+   - NEVER fabricate, invent, or infer registration URLs. If no URL is visible, return null.
+5. "registrationFee":
+   - Preserve the fee exactly as stated on the poster (e.g. "Free", "Rs. 200 per team", "₹150").
+   - Do not guess or modify. If missing, return null.
+6. "prizeDetails":
+   - Extract the explicit prize information for this track (e.g. "1st: ₹25,000, 2nd: ₹10,000", "Total Pool: ₹50,000 + Trophies").
+   - Do NOT calculate or invent prizes. If missing, return null.
+7. "venuePlatform":
+   - Extract the venue, room, lab, or platform (e.g. "CSE Lab 3", "Auditorium Hall B", "Google Meet / Discord", "HackerEarth").
+   - If missing, return null.
+8. "teamSize":
+   - Extract the explicitly stated team composition or size (e.g. "1-4 members", "Individual", "2-3 participants").
+   - Do NOT calculate or guess team sizes. If missing, return null.
+9. "eligibility":
+   - Extract explicitly stated criteria (e.g. "Open to all B.Tech/B.E. students", "First-year students only").
+   - Do NOT invent eligibility rules. If missing, return null.
+10. "durationRounds":
+    - Extract explicitly stated time limit, schedule duration, or round details (e.g. "24 Hours", "2 Rounds: Prelims (1 hr) + Finals (3 hrs)").
+    - Do NOT infer duration or rounds when not explicitly stated. If missing, return null.
+11. "description":
+    - Extract a clear summary of the competition track challenge, problem statement, or objective as stated in the flyer.
+    - Do NOT generate marketing copy. If missing, return null.
+12. "rulesGuidelines":
+    - Extract explicitly stated competition rules, constraints, judging criteria, or submission guidelines.
+    - Do NOT generate rules that are not present in the PDF. If missing, return null.
+13. Information across multiple pages should be merged into one coherent result. If a field exists on only one page, still include it.
+
+STRICT JSON ONLY:
+Return valid JSON only. Do NOT include markdown formatting, backticks, code fences (\`\`\`json), or explanations.
+Return an object with EXACTLY these 10 keys and no others:
+
+Target JSON Structure:
+{
+  "trackName": null,
+  "registrationFee": null,
+  "prizeDetails": null,
+  "venuePlatform": null,
+  "teamSize": null,
+  "eligibility": null,
+  "durationRounds": null,
+  "registrationLink": null,
+  "description": null,
+  "rulesGuidelines": null
+}`;
+
 /**
  * Executes Gemini generation with requested model and automatic fallback
  * if the requested model is retired/unavailable.
  */
-async function extractEventWithGemini(apiKey, imageParts) {
+async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PROMPT) {
   const genAI = new GoogleGenerativeAI(apiKey);
   const primaryModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
   const fallbackModel = 'gemini-3.5-flash-lite';
 
-  const contents = [EXTRACTION_PROMPT, ...imageParts];
+  const contents = [prompt, ...imageParts];
 
   try {
     const model = genAI.getGenerativeModel({
@@ -263,9 +319,35 @@ function validateAndNormalizeData(raw) {
 }
 
 /**
+ * Validates, cleans, and normalizes AI output for sub-event / competition track extraction.
+ * Guarantees returning ONLY the 10 canonical fields, with null for any missing/empty values.
+ */
+function validateAndNormalizeSubEventData(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Malformed AI response: expected a JSON object');
+  }
+
+  const cleanStr = (v) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null);
+
+  return {
+    trackName: cleanStr(raw.trackName),
+    registrationFee: cleanStr(raw.registrationFee),
+    prizeDetails: cleanStr(raw.prizeDetails),
+    venuePlatform: cleanStr(raw.venuePlatform),
+    teamSize: cleanStr(raw.teamSize),
+    eligibility: cleanStr(raw.eligibility),
+    durationRounds: cleanStr(raw.durationRounds),
+    registrationLink: cleanStr(raw.registrationLink),
+    description: cleanStr(raw.description),
+    rulesGuidelines: cleanStr(raw.rulesGuidelines),
+  };
+}
+
+/**
  * POST /api/ai/parse-event-poster
  * Accepts multipart PDF upload, validates page count, converts to images,
  * and extracts event details using Gemini multimodal vision.
+ * Supports optional "context" field: "main-event" (default) or "sub-event".
  */
 router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
   try {
@@ -297,6 +379,11 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       });
     }
 
+    // Determine extraction context: default is "main-event"
+    const context = (req.body?.context || req.query?.context || 'main-event').toString().trim().toLowerCase();
+    const isSubEvent = context === 'sub-event';
+    const activePrompt = isSubEvent ? SUB_EVENT_EXTRACTION_PROMPT : EXTRACTION_PROMPT;
+
     // Convert PDF pages to PNG image buffers using pdf-to-img
     const imageParts = [];
     const doc = await pdf(file.buffer);
@@ -322,7 +409,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     // Call Gemini with all page images in a single request
     let rawText;
     try {
-      rawText = await extractEventWithGemini(apiKey, imageParts);
+      rawText = await extractEventWithGemini(apiKey, imageParts, activePrompt);
     } catch (geminiErr) {
       console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message);
       return res.status(500).json({
@@ -349,7 +436,9 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
 
     let validatedData;
     try {
-      validatedData = validateAndNormalizeData(parsedData);
+      validatedData = isSubEvent
+        ? validateAndNormalizeSubEventData(parsedData)
+        : validateAndNormalizeData(parsedData);
     } catch (validationErr) {
       console.error('[AI parse-event-poster Validation Error]:', validationErr.message);
       return res.status(500).json({
