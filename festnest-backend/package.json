@@ -6,7 +6,10 @@
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
+    "prestart": "node utils/smokeTest.js",
     "start": "node server.js",
+    "build": "node utils/smokeTest.js",
+    "test:smoke": "node utils/smokeTest.js",
     "seed": "node utils/seed.js"
   },
   "dependencies": {
