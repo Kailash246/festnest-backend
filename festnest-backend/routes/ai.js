@@ -218,8 +218,8 @@ Return a JSON array of objects (or an object with a "tracks" array) where every 
  */
 async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PROMPT) {
   const genAI = new GoogleGenerativeAI(apiKey);
-  const primaryModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-  const fallbackModel = 'gemini-3.5-flash-lite';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const fallbackModel = 'gemini-3.5-flash';
 
   const contents = [prompt, ...imageParts];
 
