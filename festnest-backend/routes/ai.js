@@ -167,6 +167,48 @@ Target JSON Structure:
   "rulesGuidelines": null
 }`;
 
+const SUB_EVENT_BULK_EXTRACTION_PROMPT = `You are an expert event data extraction system for FestNest, a college event discovery platform.
+Analyze all provided page images of the event poster or brochure in order.
+This poster may contain MULTIPLE competition tracks/sub-events. Find ALL of them and return an array.
+
+STRICT EXTRACTION RULES:
+1. This poster may contain MULTIPLE competition tracks/sub-events. Find ALL of them and return an array.
+2. If the poster only has one track, still return it as an array with one item — keep the response shape consistent.
+3. If no specific competition tracks or sub-events are found, return an empty array [].
+4. NEVER guess or invent missing information. Extract ONLY facts explicitly stated in the provided brochure/poster images.
+5. Missing scalar fields MUST be null. Never guess or fabricate information.
+6. Each item in the array MUST have ALL 10 fields matching the existing single-track schema exactly:
+   - "trackName": Extract the specific competition/track/contest name (e.g. "RoboWars", "HackAI", "Paper Presentation", "Battle of Bands"). If unclear, null.
+   - "registrationFee": Exact fee stated for this track (e.g. "Free", "Rs. 200 per team", "₹150"). If missing, null.
+   - "prizeDetails": Explicit prize information for this track (e.g. "1st: ₹25,000, 2nd: ₹10,000", "Total Pool: ₹50,000 + Trophies"). If missing, null.
+   - "venuePlatform": Venue, room, lab, or platform (e.g. "CSE Lab 3", "Auditorium Hall B", "Google Meet / Discord"). If missing, null.
+   - "teamSize": Explicitly stated team composition or size (e.g. "1-4 members", "Individual", "2-3 participants"). If missing, null.
+   - "eligibility": Explicitly stated eligibility criteria (e.g. "Open to all UG students", "Engineering students only"). If missing, null.
+   - "durationRounds": Explicitly stated time limit, schedule duration, or round details (e.g. "24 Hours", "2 Rounds: Prelims (1 hr) + Finals (3 hrs)"). If missing, null.
+   - "registrationLink": Explicit URL visible in the PDF for this competition (e.g. "https://...", "unstop.com/..."). NEVER fabricate or invent URLs. If no URL is visible, return null.
+   - "description": Clear summary of this competition track challenge, problem statement, or objective as stated in the brochure. If missing, null.
+   - "rulesGuidelines": Explicitly stated competition rules, constraints, judging criteria, or submission guidelines. If missing, null.
+7. Information across multiple pages for each track should be combined accurately.
+
+STRICT JSON ONLY:
+Return valid JSON only. Do NOT include markdown formatting, backticks, code fences (\`\`\`json), or explanations.
+Return a JSON array of objects (or an object with a "tracks" array) where every item has EXACTLY these 10 keys:
+
+[
+  {
+    "trackName": null,
+    "registrationFee": null,
+    "prizeDetails": null,
+    "venuePlatform": null,
+    "teamSize": null,
+    "eligibility": null,
+    "durationRounds": null,
+    "registrationLink": null,
+    "description": null,
+    "rulesGuidelines": null
+  }
+]`;
+
 /**
  * Executes Gemini generation with requested model and automatic fallback
  * if the requested model is retired/unavailable.
@@ -344,10 +386,55 @@ function validateAndNormalizeSubEventData(raw) {
 }
 
 /**
+ * Normalizes a single sub-event / competition track item to guarantee the 10 canonical fields.
+ */
+function normalizeSubEventItem(item) {
+  if (!item || typeof item !== 'object') return null;
+  const cleanStr = (v) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null);
+
+  const trackName = cleanStr(item.trackName || item.name);
+  if (!trackName && !cleanStr(item.description) && !cleanStr(item.prizeDetails)) {
+    return null;
+  }
+
+  return {
+    trackName,
+    registrationFee: cleanStr(item.registrationFee || item.fee),
+    prizeDetails: cleanStr(item.prizeDetails || item.prize || item.prizes),
+    venuePlatform: cleanStr(item.venuePlatform || item.venue),
+    teamSize: cleanStr(item.teamSize),
+    eligibility: cleanStr(item.eligibility),
+    durationRounds: cleanStr(item.durationRounds || item.duration),
+    registrationLink: cleanStr(item.registrationLink || item.link || item.url),
+    description: cleanStr(item.description),
+    rulesGuidelines: cleanStr(item.rulesGuidelines || item.rules),
+  };
+}
+
+/**
+ * Validates, cleans, and normalizes AI output for multi-track / bulk sub-event extraction.
+ * Guarantees returning an array of items each containing all 10 canonical fields, with null for missing fields.
+ */
+function validateAndNormalizeSubEventBulkData(raw) {
+  let list = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (raw && typeof raw === 'object') {
+    if (Array.isArray(raw.tracks)) list = raw.tracks;
+    else if (Array.isArray(raw.subEvents)) list = raw.subEvents;
+    else if (Array.isArray(raw.competitions)) list = raw.competitions;
+    else if (Array.isArray(raw.data)) list = raw.data;
+    else if (raw.trackName || raw.name) list = [raw];
+  }
+
+  return list.map(normalizeSubEventItem).filter(Boolean);
+}
+
+/**
  * POST /api/ai/parse-event-poster
  * Accepts multipart PDF upload, validates page count, converts to images,
  * and extracts event details using Gemini multimodal vision.
- * Supports optional "context" field: "main-event" (default) or "sub-event".
+ * Supports optional "context" field: "main-event" (default), "sub-event", or "sub-event-bulk".
  */
 router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
   try {
@@ -381,8 +468,17 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
 
     // Determine extraction context: default is "main-event"
     const context = (req.body?.context || req.query?.context || 'main-event').toString().trim().toLowerCase();
+    const isSubEventBulk = context === 'sub-event-bulk';
     const isSubEvent = context === 'sub-event';
-    const activePrompt = isSubEvent ? SUB_EVENT_EXTRACTION_PROMPT : EXTRACTION_PROMPT;
+
+    let activePrompt;
+    if (isSubEventBulk) {
+      activePrompt = SUB_EVENT_BULK_EXTRACTION_PROMPT;
+    } else if (isSubEvent) {
+      activePrompt = SUB_EVENT_EXTRACTION_PROMPT;
+    } else {
+      activePrompt = EXTRACTION_PROMPT;
+    }
 
     // Convert PDF pages to PNG image buffers using pdf-to-img
     const imageParts = [];
@@ -436,14 +532,27 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
 
     let validatedData;
     try {
-      validatedData = isSubEvent
-        ? validateAndNormalizeSubEventData(parsedData)
-        : validateAndNormalizeData(parsedData);
+      if (isSubEventBulk) {
+        validatedData = validateAndNormalizeSubEventBulkData(parsedData);
+      } else if (isSubEvent) {
+        validatedData = validateAndNormalizeSubEventData(parsedData);
+      } else {
+        validatedData = validateAndNormalizeData(parsedData);
+      }
     } catch (validationErr) {
       console.error('[AI parse-event-poster Validation Error]:', validationErr.message);
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
+      });
+    }
+
+    if (isSubEventBulk) {
+      return res.status(200).json({
+        success: true,
+        pageCount,
+        tracksFound: validatedData.length,
+        data: validatedData,
       });
     }
 
