@@ -19,11 +19,23 @@ const competitionFields = [
   'venue', 'teamSize', 'format', 'duration', 'rules', 'registrationLink',
 ];
 
+const COMPETITION_LIMITS = {
+  name: 120,
+  description: 2000,
+  eligibility: 300,
+  registrationFee: 40,
+  prizeDetails: 300,
+  venue: 160,
+  teamSize: 80,
+  format: 120,
+  duration: 200,
+  rules: 1500,
+  registrationLink: 500,
+};
+
 const cleanCompetition = (input = {}) => Object.fromEntries(
-  competitionFields.map(field => [field, clean(String(input[field] || '').slice(0, field === 'rules' ? 1500 : field === 'description' ? 1000 : 500))])
   competitionFields.map(field => {
-    const max = field === 'rules' ? 1500 : field === 'description' ? 2000 : 500;
-    const max = field === 'rules' ? 1500 : field === 'description' ? 2000 : field === 'duration' ? 200 : 500;
+    const max = COMPETITION_LIMITS[field] || 500;
     return [field, clean(String(input[field] || '').slice(0, max)).slice(0, max)];
   })
 );

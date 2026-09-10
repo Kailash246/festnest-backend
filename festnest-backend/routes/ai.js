@@ -254,6 +254,43 @@ async function extractEventWithGemini(apiKey, imageParts, prompt = EXTRACTION_PR
 }
 
 /**
+ * Robustly extracts valid JSON substring from raw model output.
+ * Handles markdown code fences, leading text, trailing comments, etc.
+ */
+function extractJsonString(rawText) {
+  if (!rawText || typeof rawText !== 'string') return '';
+  let str = rawText.trim();
+
+  // Strip markdown code fences if wrapped
+  const fenceMatch = str.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch) {
+    str = fenceMatch[1].trim();
+  }
+
+  // Find the first { or [ and last matching } or ]
+  const firstBrace = str.indexOf('{');
+  const firstBracket = str.indexOf('[');
+  let startIdx = -1;
+  if (firstBrace !== -1 && firstBracket !== -1) {
+    startIdx = Math.min(firstBrace, firstBracket);
+  } else if (firstBrace !== -1) {
+    startIdx = firstBrace;
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+  }
+
+  if (startIdx !== -1) {
+    const isObject = str[startIdx] === '{';
+    const lastIdx = isObject ? str.lastIndexOf('}') : str.lastIndexOf(']');
+    if (lastIdx > startIdx) {
+      str = str.slice(startIdx, lastIdx + 1);
+    }
+  }
+
+  return str;
+}
+
+/**
  * Truncates text at the last full word under maxLength characters.
  */
 function truncateAtWordBoundary(str, maxLength = 200) {
@@ -272,6 +309,17 @@ function truncateAtWordBoundary(str, maxLength = 200) {
  * Validates, cleans, and normalizes AI output against logical schema and FestNest event fields.
  */
 function validateAndNormalizeData(raw) {
+  // Support if model wrapped result in array or an event/data container
+  if (Array.isArray(raw)) {
+    raw = raw[0];
+  } else if (raw && typeof raw === 'object') {
+    if (raw.event && typeof raw.event === 'object' && !Array.isArray(raw.event)) {
+      raw = raw.event;
+    } else if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+      raw = raw.data;
+    }
+  }
+
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Malformed AI response: expected a JSON object');
   }
@@ -283,16 +331,16 @@ function validateAndNormalizeData(raw) {
     ? raw.subEvents
         .map((sub) => {
           if (!sub || typeof sub !== 'object') return null;
-          const trackName = cleanStr(sub.trackName || sub.name);
-          const registrationFee = cleanStr(sub.registrationFee);
-          const prizeDetails = cleanStr(sub.prizeDetails);
-          const venuePlatform = cleanStr(sub.venuePlatform || sub.venue);
-          const teamSize = cleanStr(sub.teamSize);
-          const eligibility = cleanStr(sub.eligibility);
+          const trackName = truncateAtWordBoundary(cleanStr(sub.trackName || sub.name), 120);
+          const registrationFee = truncateAtWordBoundary(cleanStr(sub.registrationFee), 40);
+          const prizeDetails = truncateAtWordBoundary(cleanStr(sub.prizeDetails), 300);
+          const venuePlatform = truncateAtWordBoundary(cleanStr(sub.venuePlatform || sub.venue), 160);
+          const teamSize = truncateAtWordBoundary(cleanStr(sub.teamSize), 80);
+          const eligibility = truncateAtWordBoundary(cleanStr(sub.eligibility), 300);
           const durationRounds = truncateAtWordBoundary(cleanStr(sub.durationRounds || sub.duration), 200);
-          const registrationLink = cleanStr(sub.registrationLink);
-          const description = cleanStr(sub.description);
-          const rulesGuidelines = cleanStr(sub.rulesGuidelines || sub.rules);
+          const registrationLink = truncateAtWordBoundary(cleanStr(sub.registrationLink), 500);
+          const description = truncateAtWordBoundary(cleanStr(sub.description), 2000);
+          const rulesGuidelines = truncateAtWordBoundary(cleanStr(sub.rulesGuidelines || sub.rules), 1500);
 
           return {
             trackName,
@@ -383,6 +431,15 @@ function validateAndNormalizeData(raw) {
  * Guarantees returning ONLY the 10 canonical fields, with null for any missing/empty values.
  */
 function validateAndNormalizeSubEventData(raw) {
+  if (Array.isArray(raw)) {
+    raw = raw[0];
+  } else if (raw && typeof raw === 'object') {
+    if (raw.subEvent && typeof raw.subEvent === 'object') raw = raw.subEvent;
+    else if (raw.track && typeof raw.track === 'object') raw = raw.track;
+    else if (raw.competition && typeof raw.competition === 'object') raw = raw.competition;
+    else if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) raw = raw.data;
+  }
+
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Malformed AI response: expected a JSON object');
   }
@@ -390,17 +447,16 @@ function validateAndNormalizeSubEventData(raw) {
   const cleanStr = (v) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null);
 
   return {
-    trackName: cleanStr(raw.trackName),
-    registrationFee: cleanStr(raw.registrationFee),
-    prizeDetails: cleanStr(raw.prizeDetails),
-    venuePlatform: cleanStr(raw.venuePlatform),
-    teamSize: cleanStr(raw.teamSize),
-    eligibility: cleanStr(raw.eligibility),
-    durationRounds: cleanStr(raw.durationRounds),
-    durationRounds: truncateAtWordBoundary(cleanStr(raw.durationRounds), 200),
-    registrationLink: cleanStr(raw.registrationLink),
-    description: cleanStr(raw.description),
-    rulesGuidelines: cleanStr(raw.rulesGuidelines),
+    trackName: truncateAtWordBoundary(cleanStr(raw.trackName || raw.name), 120),
+    registrationFee: truncateAtWordBoundary(cleanStr(raw.registrationFee || raw.fee), 40),
+    prizeDetails: truncateAtWordBoundary(cleanStr(raw.prizeDetails || raw.prize || raw.prizes), 300),
+    venuePlatform: truncateAtWordBoundary(cleanStr(raw.venuePlatform || raw.venue), 160),
+    teamSize: truncateAtWordBoundary(cleanStr(raw.teamSize), 80),
+    eligibility: truncateAtWordBoundary(cleanStr(raw.eligibility), 300),
+    durationRounds: truncateAtWordBoundary(cleanStr(raw.durationRounds || raw.duration), 200),
+    registrationLink: truncateAtWordBoundary(cleanStr(raw.registrationLink || raw.link || raw.url), 500),
+    description: truncateAtWordBoundary(cleanStr(raw.description), 2000),
+    rulesGuidelines: truncateAtWordBoundary(cleanStr(raw.rulesGuidelines || raw.rules), 1500),
   };
 }
 
@@ -411,23 +467,22 @@ function normalizeSubEventItem(item) {
   if (!item || typeof item !== 'object') return null;
   const cleanStr = (v) => (typeof v === 'string' && v.trim().length > 0 ? v.trim() : null);
 
-  const trackName = cleanStr(item.trackName || item.name);
+  const trackName = truncateAtWordBoundary(cleanStr(item.trackName || item.name), 120);
   if (!trackName && !cleanStr(item.description) && !cleanStr(item.prizeDetails)) {
     return null;
   }
 
   return {
     trackName,
-    registrationFee: cleanStr(item.registrationFee || item.fee),
-    prizeDetails: cleanStr(item.prizeDetails || item.prize || item.prizes),
-    venuePlatform: cleanStr(item.venuePlatform || item.venue),
-    teamSize: cleanStr(item.teamSize),
-    eligibility: cleanStr(item.eligibility),
-    durationRounds: cleanStr(item.durationRounds || item.duration),
+    registrationFee: truncateAtWordBoundary(cleanStr(item.registrationFee || item.fee), 40),
+    prizeDetails: truncateAtWordBoundary(cleanStr(item.prizeDetails || item.prize || item.prizes), 300),
+    venuePlatform: truncateAtWordBoundary(cleanStr(item.venuePlatform || item.venue), 160),
+    teamSize: truncateAtWordBoundary(cleanStr(item.teamSize), 80),
+    eligibility: truncateAtWordBoundary(cleanStr(item.eligibility), 300),
     durationRounds: truncateAtWordBoundary(cleanStr(item.durationRounds || item.duration), 200),
-    registrationLink: cleanStr(item.registrationLink || item.link || item.url),
-    description: cleanStr(item.description),
-    rulesGuidelines: cleanStr(item.rulesGuidelines || item.rules),
+    registrationLink: truncateAtWordBoundary(cleanStr(item.registrationLink || item.link || item.url), 500),
+    description: truncateAtWordBoundary(cleanStr(item.description), 2000),
+    rulesGuidelines: truncateAtWordBoundary(cleanStr(item.rulesGuidelines || item.rules), 1500),
   };
 }
 
@@ -551,10 +606,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     // Parse and validate the response
     let parsedData;
     try {
-      let cleanText = (rawText || '').trim();
-      if (cleanText.startsWith('```')) {
-        cleanText = cleanText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-      }
+      const cleanText = extractJsonString(rawText);
       parsedData = JSON.parse(cleanText);
       console.log('[AI parse-event-poster] JSON.parse succeeded. Top-level type/keys:', typeof parsedData, Array.isArray(parsedData) ? `array of ${parsedData.length}` : Object.keys(parsedData || {}));
     } catch (parseErr) {

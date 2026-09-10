@@ -158,8 +158,8 @@ export const validateLiveEventUpdate = [
 
 export const validateCompetition = [
   body('name').trim().notEmpty().withMessage('Competition name is required').isLength({ max: 120 }).withMessage('Competition name must not exceed 120 characters'),
-  body('description').optional().isLength({ max: 1000 }).withMessage('Description must not exceed 1000 characters'),
   body('description').optional().isLength({ max: 2000 }).withMessage('Description must not exceed 2000 characters'),
+  body('duration').optional().isLength({ max: 200 }).withMessage('Duration must not exceed 200 characters'),
   body('rules').optional().isLength({ max: 1500 }).withMessage('Rules must not exceed 1500 characters'),
   body('registrationLink').optional({ checkFalsy: true }).isURL(URL_OPTS).withMessage('Registration link must be a valid URL (include https://)'),
 ];

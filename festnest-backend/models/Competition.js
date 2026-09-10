@@ -5,7 +5,6 @@ const competitionSchema = new mongoose.Schema(
   {
     event:            { type: mongoose.Schema.Types.ObjectId, ref: 'Event', required: true, index: true },
     name:             { type: String, required: true, trim: true, maxlength: 120 },
-    description:      { type: String, default: '', trim: true, maxlength: 1000 },
     description:      { type: String, default: '', trim: true, maxlength: 2000 },
     eligibility:      { type: String, default: '', trim: true, maxlength: 300 },
     registrationFee:  { type: String, default: '', trim: true, maxlength: 40 },
@@ -13,7 +12,6 @@ const competitionSchema = new mongoose.Schema(
     venue:            { type: String, default: '', trim: true, maxlength: 160 },
     teamSize:         { type: String, default: '', trim: true, maxlength: 80 },
     format:           { type: String, default: '', trim: true, maxlength: 120 },
-    duration:         { type: String, default: '', trim: true, maxlength: 120 },
     duration:         { type: String, default: '', trim: true, maxlength: 200 },
     rules:            { type: String, default: '', trim: true, maxlength: 1500 },
     registrationLink: { type: String, default: '', trim: true, maxlength: 500 },
