@@ -2,16 +2,22 @@
 import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
+import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
 import { pdf } from 'pdf-to-img';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
 
+const MAX_PDF_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB max file size
+const CONVERSION_TIMEOUT_MS = 60 * 1000;      // 60s timeout for PDF-to-image conversion
+const GEMINI_TIMEOUT_MS = 60 * 1000;          // 60s timeout for Gemini API call
+const TIMEOUT_ERROR_MESSAGE = 'This PDF is taking too long to process — try a smaller file or fewer pages';
+
 // Multer memory storage configuration (aligned with Cloudinary setup)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 }, // 30 MB max file size
+  limits: { fileSize: MAX_PDF_SIZE_BYTES },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase();
     if (file.mimetype !== 'application/pdf' && ext !== '.pdf') {
@@ -25,7 +31,13 @@ const upload = multer({
 const uploadPdfMiddleware = (req, res, next) => {
   upload.any()(req, res, (err) => {
     if (err) {
-      return res.status(400).json({ success: false, message: "Couldn't read PDF" });
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          success: false,
+          message: 'File exceeds 15 MB limit. Please upload a smaller PDF.',
+        });
+      }
+      return res.status(400).json({ success: false, message: err.message || "Couldn't read PDF" });
     }
     next();
   });
@@ -563,6 +575,46 @@ function validateAndNormalizeSubEventBulkData(raw) {
 }
 
 /**
+ * Wraps a promise with a hard timeout and returns a 408 Timeout Error on expiry.
+ */
+function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(timeoutMessage);
+      err.isTimeout = true;
+      err.status = 408;
+      reject(err);
+    }, timeoutMs);
+  });
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    timeoutPromise,
+  ]);
+}
+
+/**
+ * Downscales images wider than 1600px using sharp before sending to Gemini
+ * to reduce payload size, conversion time, and vision latency.
+ */
+async function optimizePageImage(pageBuffer) {
+  try {
+    const meta = await sharp(pageBuffer).metadata();
+    if (meta.width && meta.width > 1600) {
+      const resized = await sharp(pageBuffer)
+        .resize({ width: 1600, withoutEnlargement: true })
+        .png({ compressionLevel: 6 })
+        .toBuffer();
+      return { buffer: resized, mimeType: 'image/png' };
+    }
+    return { buffer: pageBuffer, mimeType: 'image/png' };
+  } catch (err) {
+    console.warn('[AI parse-event-poster] Image downscale fallback:', err.message);
+    return { buffer: pageBuffer, mimeType: 'image/png' };
+  }
+}
+
+/**
  * POST /api/ai/parse-event-poster
  * Accepts multipart PDF upload, validates page count, converts to images,
  * and extracts event details using Gemini multimodal vision.
@@ -573,6 +625,13 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     const file = req.file || (req.files && req.files[0]);
     if (!file || !file.buffer) {
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
+    }
+
+    if (file.size > MAX_PDF_SIZE_BYTES || file.buffer.length > MAX_PDF_SIZE_BYTES) {
+      return res.status(400).json({
+        success: false,
+        message: 'File exceeds 15 MB limit. Please upload a smaller PDF.',
+      });
     }
 
     // Parse PDF with pdf-lib to check page count
@@ -615,25 +674,40 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     }
 
     // Convert PDF pages to PNG image buffers using pdf-to-img
+    // Convert PDF pages to PNG image buffers using pdf-to-img with a 60s hard timeout
     const imageParts = [];
     let doc;
     try {
-      doc = await pdf(file.buffer);
-      for await (const page of doc) {
-        imageParts.push({
-          inlineData: {
-            data: page.toString('base64'),
-            mimeType: 'image/png',
-          },
-        });
-      }
+      await withTimeout(
+        (async () => {
+          doc = await pdf(file.buffer);
+          for await (const page of doc) {
+            const { buffer: processedBuffer, mimeType } = await optimizePageImage(page);
+            imageParts.push({
+              inlineData: {
+                data: processedBuffer.toString('base64'),
+                mimeType,
+              },
+            });
+          }
+        })(),
+        CONVERSION_TIMEOUT_MS,
+        TIMEOUT_ERROR_MESSAGE
+      );
       console.log(`[AI parse-event-poster] PDF-to-image conversion succeeded: ${imageParts.length} page images extracted`);
     } catch (pdfImgErr) {
+      if (pdfImgErr.isTimeout) {
+        console.error('[AI parse-event-poster] PDF-to-image conversion TIMED OUT after 60s');
+        return res.status(408).json({
+          success: false,
+          message: TIMEOUT_ERROR_MESSAGE,
+        });
+      }
       console.error('[AI parse-event-poster] PDF-to-image conversion FAILED:', pdfImgErr.message || pdfImgErr);
-      throw pdfImgErr;
+      return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     } finally {
       if (doc && typeof doc.destroy === 'function') {
-        await doc.destroy();
+        await doc.destroy().catch(() => {});
       }
     }
 
@@ -642,12 +716,23 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     }
 
-    // Call Gemini with all page images in a single request
+    // Call Gemini with all page images in a single request with a 60s hard timeout
     let rawText;
     try {
       console.log(`[AI parse-event-poster] Sending ${imageParts.length} image(s) to Gemini (context: "${context}")...`);
-      rawText = await extractEventWithGemini(apiKey, imageParts, activePrompt);
+      rawText = await withTimeout(
+        extractEventWithGemini(apiKey, imageParts, activePrompt),
+        GEMINI_TIMEOUT_MS,
+        TIMEOUT_ERROR_MESSAGE
+      );
     } catch (geminiErr) {
+      if (geminiErr.isTimeout) {
+        console.error('[AI parse-event-poster] Gemini extraction TIMED OUT after 60s');
+        return res.status(408).json({
+          success: false,
+          message: TIMEOUT_ERROR_MESSAGE,
+        });
+      }
       console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message, geminiErr);
       if (geminiErr.isHighDemand || isHighDemandError(geminiErr)) {
         return res.status(503).json({
