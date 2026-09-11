@@ -621,11 +621,25 @@ async function optimizePageImage(pageBuffer) {
  * Supports optional "context" field: "main-event" (default), "sub-event", or "sub-event-bulk".
  */
 router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
+  // ── Per-request instrumentation ──
+  const reqId = `ai_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const reqStartTs = Date.now();
+  const memStart = process.memoryUsage();
+  console.log(`\n[AI][${reqId}] ══════ REQUEST START ══════`);
+  console.log(`[AI][${reqId}] Time: ${new Date().toISOString()}`);
+  console.log(`[AI][${reqId}] Memory at start: heapUsed=${(memStart.heapUsed / 1024 / 1024).toFixed(1)}MB, rss=${(memStart.rss / 1024 / 1024).toFixed(1)}MB`);
+
+  let conversionDurationMs = 0;
+  let geminiDurationMs = 0;
+  let stage = 'init';
+
   try {
     const file = req.file || (req.files && req.files[0]);
     if (!file || !file.buffer) {
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     }
+
+    console.log(`[AI][${reqId}] File: "${file.originalname || 'upload.pdf'}", size=${(file.buffer.length / 1024).toFixed(1)}KB`);
 
     if (file.size > MAX_PDF_SIZE_BYTES || file.buffer.length > MAX_PDF_SIZE_BYTES) {
       return res.status(400).json({
@@ -635,6 +649,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     }
 
     // Parse PDF with pdf-lib to check page count
+    stage = 'pdf-parse';
     let pdfDoc;
     try {
       pdfDoc = await PDFDocument.load(file.buffer);
@@ -650,7 +665,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     // Check Gemini configuration
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      console.error('[AI parse-event-poster] GEMINI_API_KEY environment variable is not set');
+      console.error(`[AI][${reqId}] GEMINI_API_KEY environment variable is not set`);
       return res.status(500).json({
         success: false,
         message: 'Server configuration error: AI extraction service not configured',
@@ -662,7 +677,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     const isSubEventBulk = context === 'sub-event-bulk';
     const isSubEvent = context === 'sub-event';
 
-    console.log(`[AI parse-event-poster] Incoming request: file="${file.originalname || 'upload.pdf'}", size=${file.buffer.length} bytes, pages=${pageCount}, context="${context}"`);
+    console.log(`[AI][${reqId}] Pages=${pageCount}, context="${context}"`);
 
     let activePrompt;
     if (isSubEventBulk) {
@@ -673,8 +688,9 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       activePrompt = EXTRACTION_PROMPT;
     }
 
-    // Convert PDF pages to PNG image buffers using pdf-to-img
     // Convert PDF pages to PNG image buffers using pdf-to-img with a 60s hard timeout
+    stage = 'pdf-to-image';
+    const convStartTs = Date.now();
     const imageParts = [];
     let doc;
     try {
@@ -694,16 +710,18 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
         CONVERSION_TIMEOUT_MS,
         TIMEOUT_ERROR_MESSAGE
       );
-      console.log(`[AI parse-event-poster] PDF-to-image conversion succeeded: ${imageParts.length} page images extracted`);
+      conversionDurationMs = Date.now() - convStartTs;
+      console.log(`[AI][${reqId}] PDF-to-image OK: ${imageParts.length} pages in ${conversionDurationMs}ms`);
     } catch (pdfImgErr) {
+      conversionDurationMs = Date.now() - convStartTs;
       if (pdfImgErr.isTimeout) {
-        console.error('[AI parse-event-poster] PDF-to-image conversion TIMED OUT after 60s');
+        console.error(`[AI][${reqId}] PDF-to-image TIMED OUT after ${conversionDurationMs}ms`);
         return res.status(408).json({
           success: false,
           message: TIMEOUT_ERROR_MESSAGE,
         });
       }
-      console.error('[AI parse-event-poster] PDF-to-image conversion FAILED:', pdfImgErr.message || pdfImgErr);
+      console.error(`[AI][${reqId}] PDF-to-image FAILED after ${conversionDurationMs}ms:`, pdfImgErr.message || pdfImgErr);
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     } finally {
       if (doc && typeof doc.destroy === 'function') {
@@ -712,28 +730,33 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     }
 
     if (imageParts.length === 0) {
-      console.error('[AI parse-event-poster] No page images extracted from PDF');
+      console.error(`[AI][${reqId}] No page images extracted from PDF`);
       return res.status(400).json({ success: false, message: "Couldn't read PDF" });
     }
 
     // Call Gemini with all page images in a single request with a 60s hard timeout
+    stage = 'gemini-call';
+    const geminiStartTs = Date.now();
     let rawText;
     try {
-      console.log(`[AI parse-event-poster] Sending ${imageParts.length} image(s) to Gemini (context: "${context}")...`);
+      console.log(`[AI][${reqId}] Sending ${imageParts.length} image(s) to Gemini...`);
       rawText = await withTimeout(
         extractEventWithGemini(apiKey, imageParts, activePrompt),
         GEMINI_TIMEOUT_MS,
         TIMEOUT_ERROR_MESSAGE
       );
+      geminiDurationMs = Date.now() - geminiStartTs;
+      console.log(`[AI][${reqId}] Gemini OK in ${geminiDurationMs}ms, response length=${(rawText || '').length} chars`);
     } catch (geminiErr) {
+      geminiDurationMs = Date.now() - geminiStartTs;
       if (geminiErr.isTimeout) {
-        console.error('[AI parse-event-poster] Gemini extraction TIMED OUT after 60s');
+        console.error(`[AI][${reqId}] Gemini TIMED OUT after ${geminiDurationMs}ms`);
         return res.status(408).json({
           success: false,
           message: TIMEOUT_ERROR_MESSAGE,
         });
       }
-      console.error('[AI parse-event-poster Gemini Error]:', geminiErr.message, geminiErr);
+      console.error(`[AI][${reqId}] Gemini ERROR after ${geminiDurationMs}ms:`, geminiErr.message);
       if (geminiErr.isHighDemand || isHighDemandError(geminiErr)) {
         return res.status(503).json({
           success: false,
@@ -746,26 +769,24 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       });
     }
 
-    console.log('[AI parse-event-poster] Raw Gemini response text:');
-    console.log('--- START RAW GEMINI OUTPUT ---');
-    console.log(rawText);
-    console.log('--- END RAW GEMINI OUTPUT ---');
+    console.log(`[AI][${reqId}] Raw Gemini response (first 300 chars): ${(rawText || '').slice(0, 300)}`);
 
     // Parse and validate the response
+    stage = 'json-parse';
     let parsedData;
     try {
       const cleanText = extractJsonString(rawText);
       parsedData = JSON.parse(cleanText);
-      console.log('[AI parse-event-poster] JSON.parse succeeded. Top-level type/keys:', typeof parsedData, Array.isArray(parsedData) ? `array of ${parsedData.length}` : Object.keys(parsedData || {}));
+      console.log(`[AI][${reqId}] JSON.parse OK. Type: ${typeof parsedData}, ${Array.isArray(parsedData) ? `array of ${parsedData.length}` : Object.keys(parsedData || {}).length + ' keys'}`);
     } catch (parseErr) {
-      console.error('[AI parse-event-poster JSON Parse Error]:', parseErr.message);
-      console.error('[AI parse-event-poster Failed rawText snippet]:', (rawText || '').slice(0, 500));
+      console.error(`[AI][${reqId}] JSON Parse Error: ${parseErr.message}`);
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
       });
     }
 
+    stage = 'normalize';
     let validatedData;
     try {
       if (isSubEventBulk) {
@@ -775,15 +796,22 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       } else {
         validatedData = validateAndNormalizeData(parsedData);
       }
-      console.log(`[AI parse-event-poster] Normalization succeeded for context "${context}".`);
+      console.log(`[AI][${reqId}] Normalization OK for "${context}".`);
     } catch (validationErr) {
-      console.error('[AI parse-event-poster Validation Error]:', validationErr.message);
-      console.error('[AI parse-event-poster Validation Stack]:', validationErr.stack);
+      console.error(`[AI][${reqId}] Validation Error: ${validationErr.message}`);
       return res.status(500).json({
         success: false,
         message: "Couldn't extract event details",
       });
     }
+
+    // ── Log final summary ──
+    const totalDurationMs = Date.now() - reqStartTs;
+    const memEnd = process.memoryUsage();
+    console.log(`[AI][${reqId}] ══════ REQUEST END (SUCCESS) ══════`);
+    console.log(`[AI][${reqId}] Total: ${totalDurationMs}ms | Conversion: ${conversionDurationMs}ms | Gemini: ${geminiDurationMs}ms`);
+    console.log(`[AI][${reqId}] Memory at end: heapUsed=${(memEnd.heapUsed / 1024 / 1024).toFixed(1)}MB, rss=${(memEnd.rss / 1024 / 1024).toFixed(1)}MB`);
+    console.log(`[AI][${reqId}] Memory delta: heapUsed=${((memEnd.heapUsed - memStart.heapUsed) / 1024 / 1024).toFixed(1)}MB, rss=${((memEnd.rss - memStart.rss) / 1024 / 1024).toFixed(1)}MB\n`);
 
     if (isSubEventBulk) {
       return res.status(200).json({
@@ -800,7 +828,12 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
       data: validatedData,
     });
   } catch (error) {
-    console.error('[AI parse-event-poster general error]:', error.message);
+    const totalDurationMs = Date.now() - reqStartTs;
+    const memEnd = process.memoryUsage();
+    console.error(`[AI][${reqId}] ══════ REQUEST END (ERROR at stage="${stage}") ══════`);
+    console.error(`[AI][${reqId}] Error: ${error.message}`);
+    console.error(`[AI][${reqId}] Total: ${totalDurationMs}ms | Conversion: ${conversionDurationMs}ms | Gemini: ${geminiDurationMs}ms`);
+    console.error(`[AI][${reqId}] Memory at end: heapUsed=${(memEnd.heapUsed / 1024 / 1024).toFixed(1)}MB, rss=${(memEnd.rss / 1024 / 1024).toFixed(1)}MB\n`);
     return res.status(500).json({
       success: false,
       message: "Couldn't read PDF",
