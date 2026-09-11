@@ -1,7 +1,7 @@
 // utils/smokeTest.js – Lightweight pre-deploy syntax and import verification
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -67,7 +67,7 @@ const modulesToImport = [
 try {
   for (const mod of modulesToImport) {
     const modPath = path.resolve(rootDir, mod);
-    await import(`file://${modPath}`);
+    await import(pathToFileURL(modPath).href);
   }
   console.log(`✅ Module import check passed for ${modulesToImport.length} critical modules.`);
 } catch (importErr) {

@@ -9,7 +9,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
 
-const MAX_PDF_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB max file size
+const MAX_PDF_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB max file size
 const CONVERSION_TIMEOUT_MS = 60 * 1000;      // 60s timeout for PDF-to-image conversion
 const GEMINI_TIMEOUT_MS = 60 * 1000;          // 60s timeout for Gemini API call
 const TIMEOUT_ERROR_MESSAGE = 'This PDF is taking too long to process — try a smaller file or fewer pages';
@@ -34,7 +34,7 @@ const uploadPdfMiddleware = (req, res, next) => {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
           success: false,
-          message: 'File exceeds 15 MB limit. Please upload a smaller PDF.',
+          message: 'File exceeds 25 MB limit. Please upload a smaller PDF.',
         });
       }
       return res.status(400).json({ success: false, message: err.message || "Couldn't read PDF" });
@@ -630,7 +630,7 @@ router.post('/parse-event-poster', uploadPdfMiddleware, async (req, res) => {
     if (file.size > MAX_PDF_SIZE_BYTES || file.buffer.length > MAX_PDF_SIZE_BYTES) {
       return res.status(400).json({
         success: false,
-        message: 'File exceeds 15 MB limit. Please upload a smaller PDF.',
+        message: 'File exceeds 25 MB limit. Please upload a smaller PDF.',
       });
     }
 
