@@ -179,3 +179,4 @@ feedbackSchema.index({ createdAt: -1 });
 export const Feedback = mongoose.model('Feedback', feedbackSchema);
 
 export { CampusAmbassador } from './CampusAmbassador.js';
+export { CAReferralLog } from './CAReferralLog.js';

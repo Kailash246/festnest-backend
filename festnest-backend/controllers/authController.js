@@ -3,6 +3,7 @@ import bcrypt        from 'bcryptjs';
 import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
+import CAReferralLog from '../models/CAReferralLog.js';
 import OTP           from '../models/OTP.js';
 import RefreshToken  from '../models/RefreshToken.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, refreshTokenExpiry } from '../utils/jwt.js';
@@ -144,9 +145,10 @@ export const register = asyncHandler(async (req, res) => {
   // Check for Campus Ambassador referral attribution
   let referredByCA = null;
   let caReferralCodeUsed = '';
-  const refToLookup = (req.body.referralCode || req.body.ref || '').toString().trim().toUpperCase();
+  let matchingCA = null;
+  const refToLookup = (req.body.referralCode || req.body.ref || req.body.fn_referral_code || '').toString().trim().toUpperCase();
   if (refToLookup) {
-    const matchingCA = await CampusAmbassador.findOne({ referralCode: refToLookup, status: 'approved' });
+    matchingCA = await CampusAmbassador.findOne({ referralCode: refToLookup, status: 'approved' });
     if (matchingCA) {
       referredByCA = matchingCA._id;
       caReferralCodeUsed = matchingCA.referralCode;
@@ -164,6 +166,25 @@ export const register = asyncHandler(async (req, res) => {
     caReferralCodeUsed,
     isEmailVerified: true,
   });
+
+  if (matchingCA) {
+    try {
+      matchingCA.stats = matchingCA.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 };
+      matchingCA.stats.referralSignups = (matchingCA.stats.referralSignups || 0) + 1;
+      await matchingCA.save();
+
+      await CAReferralLog.create({
+        caId: matchingCA._id,
+        type: 'student',
+        refId: user._id,
+        refModel: 'User',
+        label: `${user.name}${user.college ? ` (${user.college})` : ''}`,
+      });
+    } catch (caErr) {
+      console.error('[CA Referral Attribution Error on Signup]', caErr.message);
+      // must never affect user registration response
+    }
+  }
 
   const tokens = await issueTokens(user, req);
   return created(res, { user: user.toPublic(), ...tokens }, 'Account created successfully');

@@ -1,5 +1,6 @@
 // controllers/caController.js
 import CampusAmbassador from '../models/CampusAmbassador.js';
+import CAReferralLog from '../models/CAReferralLog.js';
 import User from '../models/User.js';
 import { HostedEvent } from '../models/index.js';
 import Event from '../models/Event.js';
@@ -250,16 +251,41 @@ export const apply = asyncHandler(async (req, res) => {
 /* ────────────────────────────────────────────────────────
    GET /api/ca/applications (Admin-protected)
    List applications with status filter, search, & counts
-──────────────────────────────────────────────────────── */
+ ──────────────────────────────────────────────────────── */
 export const listApplications = asyncHandler(async (req, res) => {
-  const { status, q, sort = 'newest', page = 1, limit = 50 } = req.query;
+  const {
+    status,
+    tier,
+    city,
+    search,
+    q,
+    sortBy,
+    sortDir,
+    sort = 'newest',
+    page = 1,
+    limit = 50,
+  } = req.query;
 
   const filter = {};
   if (status && status !== 'all') {
-    filter.status = status;
+    if (status === 'pending') {
+      filter.status = { $in: ['applied', 'screening'] };
+    } else {
+      filter.status = status;
+    }
   }
-  if (q && q.trim()) {
-    const rx = new RegExp(q.trim(), 'i');
+
+  if (tier && tier !== 'all') {
+    filter.tier = tier;
+  }
+
+  if (city && city.trim()) {
+    filter.city = new RegExp(city.trim(), 'i');
+  }
+
+  const querySearch = (search || q || '').trim();
+  if (querySearch) {
+    const rx = new RegExp(querySearch, 'i');
     filter.$or = [
       { name: rx },
       { college: rx },
@@ -271,8 +297,44 @@ export const listApplications = asyncHandler(async (req, res) => {
   }
 
   let sortCriteria = { createdAt: -1 };
-  if (sort === 'oldest') sortCriteria = { createdAt: 1 };
-  if (sort === 'name') sortCriteria = { name: 1 };
+  if (sortBy) {
+    const direction = String(sortDir).toLowerCase() === 'asc' ? 1 : -1;
+    switch (sortBy) {
+      case 'organizersOnboarded':
+        sortCriteria = { 'stats.organizersOnboarded': direction, createdAt: -1 };
+        break;
+      case 'eventsSourced':
+        sortCriteria = { 'stats.eventsSourced': direction, createdAt: -1 };
+        break;
+      case 'referralSignups':
+        sortCriteria = { 'stats.referralSignups': direction, createdAt: -1 };
+        break;
+      case 'name':
+        sortCriteria = { name: direction };
+        break;
+      case 'college':
+        sortCriteria = { college: direction };
+        break;
+      case 'city':
+        sortCriteria = { city: direction };
+        break;
+      case 'tier':
+        sortCriteria = { tier: direction };
+        break;
+      case 'status':
+        sortCriteria = { status: direction };
+        break;
+      case 'createdAt':
+      case 'appliedAt':
+        sortCriteria = { createdAt: direction };
+        break;
+      default:
+        sortCriteria = { createdAt: direction };
+    }
+  } else {
+    if (sort === 'oldest') sortCriteria = { createdAt: 1 };
+    if (sort === 'name') sortCriteria = { name: 1 };
+  }
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
@@ -434,7 +496,7 @@ export const getMyProfile = asyncHandler(async (req, res) => {
   }
 
   // Pending / screening / rejected states: return safe tracking info
-  const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
+  const clientUrl = process.env.PUBLIC_SITE_URL || (process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in');
   const referralUrl = ca.referralCode ? `${clientUrl}?ref=${ca.referralCode}` : '';
 
   return ok(res, {
@@ -456,7 +518,7 @@ export const getMyProfile = asyncHandler(async (req, res) => {
       validThru: ca.validThru,
       appliedAt: ca.appliedAt,
       approvedAt: ca.approvedAt,
-      stats: ca.stats || { organizersOnboarded: 0, eventsSourced: 0 },
+      stats: ca.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 },
       rejectionReason: ca.status === 'rejected' ? ca.rejectionReason : undefined,
     },
   });
@@ -494,6 +556,88 @@ export const getPublicCard = asyncHandler(async (req, res) => {
       status: ca.status,
       photoUrl: ca.photoUrl,
     },
+  });
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/me/impact (Auth-protected)
+   Returns paginated CAReferralLog entries for the logged-in CA
+──────────────────────────────────────────────────────── */
+export const getMyImpact = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const userEmail = req.user.email?.toLowerCase();
+
+  let ca = await CampusAmbassador.findOne({ userId }).sort({ createdAt: -1 });
+  if (!ca && userEmail) {
+    ca = await CampusAmbassador.findOne({ email: userEmail }).sort({ createdAt: -1 });
+  }
+
+  if (!ca) {
+    return notFoundRes(res, 'No campus ambassador record found for your account');
+  }
+
+  const { page = 1, limit = 20, type } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const filter = { caId: ca._id };
+  if (type && ['organizer', 'event', 'student'].includes(type)) {
+    filter.type = type;
+  }
+
+  const [logs, total] = await Promise.all([
+    CAReferralLog.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    CAReferralLog.countDocuments(filter),
+  ]);
+
+  return ok(res, {
+    logs,
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum) || 1,
+  });
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/:id/impact (Admin-protected)
+   Returns paginated CAReferralLog entries for a specific CA
+──────────────────────────────────────────────────────── */
+export const getCAImpact = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const ca = await CampusAmbassador.findById(id);
+  if (!ca) {
+    return notFoundRes(res, 'Ambassador not found');
+  }
+
+  const { page = 1, limit = 20, type } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const filter = { caId: ca._id };
+  if (type && ['organizer', 'event', 'student'].includes(type)) {
+    filter.type = type;
+  }
+
+  const [logs, total] = await Promise.all([
+    CAReferralLog.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    CAReferralLog.countDocuments(filter),
+  ]);
+
+  return ok(res, {
+    logs,
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum) || 1,
   });
 });
 

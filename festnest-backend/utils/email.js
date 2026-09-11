@@ -226,7 +226,7 @@ export async function sendRegistrationConfirmEmail(email, userName, eventName, e
 
 /* ── Campus Ambassador Approval Email ── */
 export async function sendAmbassadorApprovedEmail({ email, name, caId, referralCode }) {
-  const clientUrl = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in';
+  const clientUrl = process.env.PUBLIC_SITE_URL || (process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in');
   const dashboardUrl = `${clientUrl}/ca/dashboard`;
   const referralUrl = `${clientUrl}?ref=${referralCode}`;
 

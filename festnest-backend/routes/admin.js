@@ -11,7 +11,7 @@ import {
   addCollege, updateCollege, deleteCollege,
   broadcastNotification,
   listAmbassadors, getAmbassador, approveAmbassador, rejectAmbassador,
-  updateAmbassadorStatus, adjustAmbassadorStats,
+  updateAmbassadorStatus, adjustAmbassadorStats, getAmbassadorImpact,
   listFeedback, getFeedback, deleteFeedback,
 } from '../controllers/adminController.js';
 import {
@@ -65,6 +65,7 @@ router.post('/notify', ...validateBroadcast, validate, broadcastNotification);
 /* ── Campus Ambassadors ── */
 router.get('/ca',               listAmbassadors);
 router.get('/ca/:id',           getAmbassador);
+router.get('/ca/:id/impact',    getAmbassadorImpact);
 router.patch('/ca/:id/approve', approveAmbassador);
 router.patch('/ca/:id/reject',  rejectAmbassador);
 router.patch('/ca/:id/status',  updateAmbassadorStatus);

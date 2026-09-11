@@ -3,7 +3,7 @@ import mongoose     from 'mongoose';
 import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
-import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador } from '../models/index.js';
+import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog } from '../models/index.js';
 import { calculateTier } from './caController.js';
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
@@ -770,10 +770,22 @@ export const hostEvent = asyncHandler(async (req, res) => {
         if (!alreadyCounted) {
           ca.referredOrganizerIds = ca.referredOrganizerIds || [];
           ca.referredOrganizerIds.push(req.user._id);
-          ca.stats = ca.stats || { organizersOnboarded: 0, eventsSourced: 0 };
+          ca.stats = ca.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 };
           ca.stats.organizersOnboarded = (ca.stats.organizersOnboarded || 0) + 1;
           ca.tier = calculateTier(ca.stats.organizersOnboarded);
           await ca.save();
+
+          const orgName = req.user.name || 'Organizer';
+          const orgCollege = req.user.college || clean(college) || '';
+          const label = orgCollege ? `${orgName} (${orgCollege})` : orgName;
+
+          await CAReferralLog.create({
+            caId: ca._id,
+            type: 'organizer',
+            refId: req.user._id,
+            refModel: 'User',
+            label,
+          });
         }
       }
     } catch (caErr) {

@@ -87,6 +87,7 @@ const campusAmbassadorSchema = new mongoose.Schema(
     stats: {
       organizersOnboarded: { type: Number, default: 0 },
       eventsSourced:       { type: Number, default: 0 },
+      referralSignups:     { type: Number, default: 0 },
     },
 
     photoUrl:   { type: String, default: null },

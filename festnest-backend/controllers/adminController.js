@@ -3,7 +3,7 @@ import Event      from '../models/Event.js';
 import User       from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
-         SupportTicket, PointsLog, College, Feedback } from '../models/index.js';
+         SupportTicket, PointsLog, College, Feedback, CAReferralLog } from '../models/index.js';
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
@@ -591,7 +591,18 @@ export const broadcastNotification = asyncHandler(async (req, res) => {
  * List ambassador applications with filtering, search, pagination, and status counts
  */
 export const listAmbassadors = asyncHandler(async (req, res) => {
-  const { status, q, sort = 'newest', page = 1, limit = 20 } = req.query;
+  const {
+    status,
+    tier,
+    city,
+    search,
+    q,
+    sortBy,
+    sortDir,
+    sort = 'newest',
+    page = 1,
+    limit = 20,
+  } = req.query;
 
   const filter = {};
   if (status && status !== 'all') {
@@ -602,8 +613,17 @@ export const listAmbassadors = asyncHandler(async (req, res) => {
     }
   }
 
-  if (q && q.trim()) {
-    const rx = new RegExp(q.trim(), 'i');
+  if (tier && tier !== 'all') {
+    filter.tier = tier;
+  }
+
+  if (city && city.trim()) {
+    filter.city = new RegExp(city.trim(), 'i');
+  }
+
+  const querySearch = (search || q || '').trim();
+  if (querySearch) {
+    const rx = new RegExp(querySearch, 'i');
     filter.$or = [
       { name: rx },
       { college: rx },
@@ -615,8 +635,44 @@ export const listAmbassadors = asyncHandler(async (req, res) => {
   }
 
   let sortCriteria = { createdAt: -1 };
-  if (sort === 'oldest') sortCriteria = { createdAt: 1 };
-  if (sort === 'name') sortCriteria = { name: 1 };
+  if (sortBy) {
+    const direction = String(sortDir).toLowerCase() === 'asc' ? 1 : -1;
+    switch (sortBy) {
+      case 'organizersOnboarded':
+        sortCriteria = { 'stats.organizersOnboarded': direction, createdAt: -1 };
+        break;
+      case 'eventsSourced':
+        sortCriteria = { 'stats.eventsSourced': direction, createdAt: -1 };
+        break;
+      case 'referralSignups':
+        sortCriteria = { 'stats.referralSignups': direction, createdAt: -1 };
+        break;
+      case 'name':
+        sortCriteria = { name: direction };
+        break;
+      case 'college':
+        sortCriteria = { college: direction };
+        break;
+      case 'city':
+        sortCriteria = { city: direction };
+        break;
+      case 'tier':
+        sortCriteria = { tier: direction };
+        break;
+      case 'status':
+        sortCriteria = { status: direction };
+        break;
+      case 'createdAt':
+      case 'appliedAt':
+        sortCriteria = { createdAt: direction };
+        break;
+      default:
+        sortCriteria = { createdAt: direction };
+    }
+  } else {
+    if (sort === 'oldest') sortCriteria = { createdAt: 1 };
+    if (sort === 'name') sortCriteria = { name: 1 };
+  }
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
@@ -823,6 +879,42 @@ export const adjustAmbassadorStats = asyncHandler(async (req, res) => {
 
   await ca.save();
   return ok(res, { ambassador: ca, stats: live }, 'Ambassador metrics updated with audit record');
+});
+
+/**
+ * GET /api/admin/ca/:id/impact
+ * Paginated referral ledger entries for a specific ambassador
+ */
+export const getAmbassadorImpact = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const ca = await CampusAmbassador.findById(id);
+  if (!ca) return notFoundRes(res, 'Ambassador not found');
+
+  const { page = 1, limit = 20, type } = req.query;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
+  const filter = { caId: ca._id };
+  if (type && ['organizer', 'event', 'student'].includes(type)) {
+    filter.type = type;
+  }
+
+  const [logs, total] = await Promise.all([
+    CAReferralLog.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    CAReferralLog.countDocuments(filter),
+  ]);
+
+  return ok(res, {
+    logs,
+    total,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum) || 1,
+  });
 });
 
 /* ═══════════════════════════════════════════════════════════
