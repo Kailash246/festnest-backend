@@ -496,7 +496,8 @@ export const getMyProfile = asyncHandler(async (req, res) => {
   }
 
   // Pending / screening / rejected states: return safe tracking info
-  const clientUrl = process.env.PUBLIC_SITE_URL || (process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in');
+  const rawClientUrl = process.env.PUBLIC_SITE_URL || (process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://festnest.in');
+  const clientUrl = (rawClientUrl.includes('vercel.app') || rawClientUrl.includes('onrender.com')) ? 'https://festnest.in' : rawClientUrl;
   const referralUrl = ca.referralCode ? `${clientUrl}?ref=${ca.referralCode}` : '';
 
   return ok(res, {
