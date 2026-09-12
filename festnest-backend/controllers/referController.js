@@ -1,7 +1,7 @@
 // controllers/referController.js
 import crypto from 'node:crypto';
 import User from '../models/User.js';
-import { Referral, FnCoinLedger, Spin, RewardConfig } from '../models/index.js';
+import { Referral, FnCoinLedger, Spin, RewardConfig, ReferSettings } from '../models/index.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
 /* ─── Default seed for wheel configuration ─────────────────── */
@@ -21,6 +21,33 @@ async function ensureRewardConfigs() {
   if (count === 0) {
     await RewardConfig.insertMany(DEFAULT_REWARDS);
   }
+}
+
+/* ─── Program Settings Helper ─────────────────────────────── */
+export async function getReferSettings() {
+  let settings = await ReferSettings.findOne();
+  if (!settings) {
+    try {
+      settings = await ReferSettings.create({
+        coinsPerReferral: 10,
+        coinsPerSpin: 200,
+        referralsPerMilestone: 10,
+        registrationsPerMilestone: 5,
+        programActive: true,
+      });
+    } catch {
+      settings = await ReferSettings.findOne();
+    }
+  }
+  return (
+    settings || {
+      coinsPerReferral: 10,
+      coinsPerSpin: 200,
+      referralsPerMilestone: 10,
+      registrationsPerMilestone: 5,
+      programActive: true,
+    }
+  );
 }
 
 /* ─── Helper: Lazy-generate referral code if user lacks one ── */
@@ -57,44 +84,52 @@ export function calculateMilestonesAndSpins({
   uniqueRegisteredReferredUsers,
   fnCoins,
   consumedMilestones = 0,
+  bonusSpins = 0,
+  referralsPerMilestone = 10,
+  registrationsPerMilestone = 5,
+  coinsPerSpin = 200,
 }) {
-  const verifiedReferralMilestones = Math.floor(verifiedReferrals / 10);
-  const verifiedRegistrationMilestones = Math.floor(uniqueRegisteredReferredUsers / 5);
+  const verifiedReferralMilestones = Math.floor(verifiedReferrals / referralsPerMilestone);
+  const verifiedRegistrationMilestones = Math.floor(uniqueRegisteredReferredUsers / registrationsPerMilestone);
 
   const eligibleMilestones = Math.min(
     verifiedReferralMilestones,
     verifiedRegistrationMilestones
   );
 
-  const coinBasedSpins = Math.floor(fnCoins / 200);
+  const coinBasedSpins = Math.floor(fnCoins / coinsPerSpin);
 
-  const availableSpins = Math.max(
+  const baseSpins = Math.max(
     0,
     Math.min(eligibleMilestones - consumedMilestones, coinBasedSpins)
   );
 
+  const availableSpins = baseSpins + Math.max(0, bonusSpins || 0);
+
   // Progress in the current milestone block towards the next unlock
   const currentReferralProgress = Math.min(
-    10,
-    Math.max(0, verifiedReferrals - consumedMilestones * 10)
+    referralsPerMilestone,
+    Math.max(0, verifiedReferrals - consumedMilestones * referralsPerMilestone)
   );
   const currentRegistrationProgress = Math.min(
-    5,
-    Math.max(0, uniqueRegisteredReferredUsers - consumedMilestones * 5)
+    registrationsPerMilestone,
+    Math.max(0, uniqueRegisteredReferredUsers - consumedMilestones * registrationsPerMilestone)
   );
 
   return {
     eligibleMilestones,
     consumedMilestones,
+    baseSpins,
+    bonusSpins: Math.max(0, bonusSpins || 0),
     availableSpins,
     milestone: {
       referrals: {
         count: currentReferralProgress,
-        required: 10,
+        required: referralsPerMilestone,
       },
       eventRegistrations: {
         count: currentRegistrationProgress,
-        required: 5,
+        required: registrationsPerMilestone,
       },
     },
   };
@@ -136,12 +171,17 @@ export const getReferralSummary = asyncHandler(async (req, res) => {
     }),
     Spin.countDocuments({ user: user._id }),
   ]);
+  const settings = await getReferSettings();
 
   const calc = calculateMilestonesAndSpins({
     verifiedReferrals,
     uniqueRegisteredReferredUsers,
     fnCoins: user.fnCoins || 0,
     consumedMilestones,
+    bonusSpins: user.bonusSpins || 0,
+    referralsPerMilestone: settings.referralsPerMilestone || 10,
+    registrationsPerMilestone: settings.registrationsPerMilestone || 5,
+    coinsPerSpin: settings.coinsPerSpin || 200,
   });
 
   return ok(
@@ -151,11 +191,11 @@ export const getReferralSummary = asyncHandler(async (req, res) => {
       referralLink,
       fnCoins: {
         available: user.fnCoins || 0,
-        required: 200,
+        required: settings.coinsPerSpin || 200,
       },
       points: {
         available: user.fnCoins || 0,
-        required: 200,
+        required: settings.coinsPerSpin || 200,
       },
       milestone: calc.milestone,
       totals: {
@@ -239,6 +279,8 @@ export const getWheelConfig = asyncHandler(async (req, res) => {
   const segments = configs.map((c) => ({
     id: c.segmentId,
     label: c.label,
+    // Map fn_coins to 'points' type so ReferAndEarn.jsx REWARD_TYPE_ICON displays Coins icon
+    type: c.type === 'fn_coins' ? 'points' : c.type,
     type: c.type,
   }));
 
@@ -504,7 +546,7 @@ export const spinWheel = asyncHandler(async (req, res) => {
 });
 
 /* ────────────────────────────────────────────────────────
-   ADMIN ENDPOINTS
+   ADMIN ENDPOINTS — SUPREME OPERATIONAL CONTROL
 ──────────────────────────────────────────────────────── */
 
 /* GET /api/admin/refer/stats */
@@ -513,55 +555,727 @@ export const getAdminReferStats = asyncHandler(async (req, res) => {
     totalReferrals,
     verifiedReferrals,
     invalidReferrals,
+    pendingReferrals,
     registeredReferredUsers,
     totalSpins,
+    todaySpins,
     coinsIssuedAgg,
     coinsSpentAgg,
+    coinsWheelAgg,
+    coinsReversedAgg,
+    adminAdjustmentsAgg,
+    coinsCirculationAgg,
     pendingCashSpins,
+    underReviewCashSpins,
+    approvedCashSpins,
     paidCashSpins,
+    rejectedSpins,
+    cashPaidSumAgg,
+    rewardTypeCounts,
   ] = await Promise.all([
     Referral.countDocuments({}),
     Referral.countDocuments({ status: 'verified' }),
     Referral.countDocuments({ status: 'invalid' }),
+    Referral.countDocuments({ status: 'pending' }),
     Referral.countDocuments({ status: 'verified', eventStatus: 'registered' }),
-    Spin.countDocuments({}),
+    Spin.countDocuments({ 'metadata.isTest': { $ne: true } }),
+    Spin.countDocuments({
+      'metadata.isTest': { $ne: true },
+      createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+    }),
     FnCoinLedger.aggregate([
-      { $match: { amount: { $gt: 0 } } },
+      { $match: { type: 'referral_reward', amount: { $gt: 0 } } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]),
     FnCoinLedger.aggregate([
-      { $match: { amount: { $lt: 0 } } },
+      { $match: { type: 'spin_cost' } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]),
-    Spin.countDocuments({ 'reward.type': 'cash', status: { $in: ['pending', 'under_review', 'approved'] } }),
-    Spin.countDocuments({ 'reward.type': 'cash', status: 'paid' }),
+    FnCoinLedger.aggregate([
+      { $match: { type: 'spin_reward_coins' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    FnCoinLedger.aggregate([
+      { $match: { type: 'fraud_reversal' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    FnCoinLedger.aggregate([
+      { $match: { type: 'admin_adjustment', 'metadata.isTest': { $ne: true } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    User.aggregate([
+      { $group: { _id: null, total: { $sum: '$fnCoins' } } },
+    ]),
+    Spin.countDocuments({ 'reward.type': 'cash', status: 'pending', 'metadata.isTest': { $ne: true } }),
+    Spin.countDocuments({ 'reward.type': 'cash', status: 'under_review', 'metadata.isTest': { $ne: true } }),
+    Spin.countDocuments({ 'reward.type': 'cash', status: 'approved', 'metadata.isTest': { $ne: true } }),
+    Spin.countDocuments({ 'reward.type': 'cash', status: 'paid', 'metadata.isTest': { $ne: true } }),
+    Spin.countDocuments({ status: { $in: ['rejected', 'cancelled'] }, 'metadata.isTest': { $ne: true } }),
+    Spin.aggregate([
+      { $match: { 'reward.type': 'cash', status: 'paid', 'metadata.isTest': { $ne: true } } },
+      { $group: { _id: null, total: { $sum: '$reward.value' } } },
+    ]),
+    Spin.aggregate([
+      { $match: { 'metadata.isTest': { $ne: true } } },
+      { $group: { _id: '$reward.type', count: { $sum: 1 } } },
+    ]),
   ]);
 
   const fnCoinsIssued = coinsIssuedAgg[0]?.total || 0;
   const fnCoinsSpent = Math.abs(coinsSpentAgg[0]?.total || 0);
+  const fnCoinsFromWheel = coinsWheelAgg[0]?.total || 0;
+  const fnCoinsReversed = Math.abs(coinsReversedAgg[0]?.total || 0);
+  const fnCoinsAdminAdjustments = adminAdjustmentsAgg[0]?.total || 0;
+  const currentInCirculation = coinsCirculationAgg[0]?.total || 0;
+  const totalCashPaid = cashPaidSumAgg[0]?.total || 0;
+
+  const rewardDist = {};
+  rewardTypeCounts.forEach((r) => {
+    rewardDist[r._id] = r.count;
+  });
 
   return ok(res, {
-    referrals: {
-      total: totalReferrals,
-      verified: verifiedReferrals,
-      invalid: invalidReferrals,
-      conversionRate: totalReferrals > 0 ? (verifiedReferrals / totalReferrals) * 100 : 0,
-    },
-    events: {
+    overview: {
+      totalReferrals,
+      verifiedReferrals,
+      invalidReferrals,
+      pendingReferrals,
       registeredReferredUsers,
+      conversionRate: totalReferrals > 0 ? (verifiedReferrals / totalReferrals) * 100 : 0,
       registrationConversion:
         verifiedReferrals > 0 ? (registeredReferredUsers / verifiedReferrals) * 100 : 0,
     },
     coins: {
       issued: fnCoinsIssued,
-      spent: fnCoinsSpent,
+      spentOnSpins: fnCoinsSpent,
+      awardedFromWheel: fnCoinsFromWheel,
+      reversed: fnCoinsReversed,
+      adminAdjustments: fnCoinsAdminAdjustments,
+      inCirculation: currentInCirculation,
     },
     spins: {
       total: totalSpins,
-      pendingCash: pendingCashSpins,
-      paidCash: paidCashSpins,
+      today: todaySpins,
+      pending: pendingCashSpins + underReviewCashSpins,
+      completed: paidCashSpins,
+      cancelled: rejectedSpins,
+    },
+    rewards: {
+      totalWon: totalSpins,
+      cash: rewardDist.cash || 0,
+      fn_coins: rewardDist.fn_coins || 0,
+      merch: rewardDist.merch || 0,
+      bonus_spin: rewardDist.bonus_spin || 0,
+      none: rewardDist.none || 0,
+    },
+    cash: {
+      pending: pendingCashSpins,
+      underReview: underReviewCashSpins,
+      approved: approvedCashSpins,
+      paid: paidCashSpins,
+      totalCashPaid,
     },
   });
+});
+
+/* GET /api/admin/refer/referrals */
+export const listAdminReferrals = asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const { status, eventStatus, search } = req.query;
+
+  const filter = {};
+  if (status) filter.status = status;
+  if (eventStatus) filter.eventStatus = eventStatus;
+
+  if (search && search.trim()) {
+    const s = search.trim();
+    const matchingUsers = await User.find({
+      $or: [
+        { name: { $regex: s, $options: 'i' } },
+        { email: { $regex: s, $options: 'i' } },
+        { referralCode: { $regex: s, $options: 'i' } },
+      ],
+    })
+      .select('_id')
+      .lean();
+
+    const userIds = matchingUsers.map((u) => u._id);
+    filter.$or = [
+      { referrer: { $in: userIds } },
+      { referredUser: { $in: userIds } },
+    ];
+  }
+
+  const [total, referrals] = await Promise.all([
+    Referral.countDocuments(filter),
+    Referral.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('referrer', 'name email referralCode fnCoins')
+      .populate('referredUser', 'name email createdAt')
+      .populate('registeredEvent', 'title slug')
+      .populate('invalidatedBy', 'name email')
+      .lean(),
+  ]);
+
+  return ok(res, {
+    items: referrals,
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  });
+});
+
+/* GET /api/admin/refer/referrals/:id */
+export const getAdminReferralDetail = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const referral = await Referral.findById(id)
+    .populate('referrer', 'name email phone referralCode fnCoins bonusSpins points')
+    .populate('referredUser', 'name email phone createdAt isEmailVerified')
+    .populate('registeredEvent', 'title slug')
+    .populate('invalidatedBy', 'name email')
+    .lean();
+
+  if (!referral) return notFoundRes(res, 'Referral record not found');
+  return ok(res, { referral });
+});
+
+/* GET /api/admin/refer/users/:id */
+export const getAdminUserReferProfile = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const user = await User.findById(id)
+    .select('name email phone role fnCoins bonusSpins points referralCode createdAt')
+    .lean();
+  if (!user) return notFoundRes(res, 'User not found');
+
+  const settings = await getReferSettings();
+
+  const [
+    totalReferrals,
+    verifiedReferrals,
+    invalidReferrals,
+    uniqueRegisteredUsers,
+    totalSpins,
+    referrals,
+    ledgerEntries,
+  ] = await Promise.all([
+    Referral.countDocuments({ referrer: user._id }),
+    Referral.countDocuments({ referrer: user._id, status: 'verified' }),
+    Referral.countDocuments({ referrer: user._id, status: 'invalid' }),
+    Referral.countDocuments({ referrer: user._id, status: 'verified', eventStatus: 'registered' }),
+    Spin.countDocuments({ user: user._id }),
+    Referral.find({ referrer: user._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .populate('referredUser', 'name email')
+      .populate('registeredEvent', 'title slug')
+      .lean(),
+    FnCoinLedger.find({ user: user._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean(),
+  ]);
+
+  const calc = calculateMilestonesAndSpins({
+    verifiedReferrals,
+    uniqueRegisteredReferredUsers: uniqueRegisteredUsers,
+    fnCoins: user.fnCoins || 0,
+    consumedMilestones: totalSpins,
+    bonusSpins: user.bonusSpins || 0,
+    referralsPerMilestone: settings.referralsPerMilestone || 10,
+    registrationsPerMilestone: settings.registrationsPerMilestone || 5,
+    coinsPerSpin: settings.coinsPerSpin || 200,
+  });
+
+  return ok(res, {
+    user,
+    stats: {
+      totalReferrals,
+      verifiedReferrals,
+      invalidReferrals,
+      uniqueRegisteredUsers,
+      consumedSpins: totalSpins,
+      availableSpins: calc.availableSpins,
+      baseSpins: calc.baseSpins,
+      bonusSpins: user.bonusSpins || 0,
+      eligibleMilestones: calc.eligibleMilestones,
+      milestone: calc.milestone,
+    },
+    referrals,
+    ledger: ledgerEntries,
+  });
+});
+
+/* GET /api/admin/refer/ledger */
+export const listAdminLedger = asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const { type, userId, direction, search } = req.query;
+
+  const filter = {};
+  if (type) filter.type = type;
+  if (userId) filter.user = userId;
+  if (direction === 'credit') filter.amount = { $gt: 0 };
+  if (direction === 'debit') filter.amount = { $lt: 0 };
+
+  if (search && search.trim()) {
+    const s = search.trim();
+    const matchingUsers = await User.find({
+      $or: [
+        { name: { $regex: s, $options: 'i' } },
+        { email: { $regex: s, $options: 'i' } },
+      ],
+    })
+      .select('_id')
+      .lean();
+
+    const userIds = matchingUsers.map((u) => u._id);
+    filter.$or = [
+      { user: { $in: userIds } },
+      { description: { $regex: s, $options: 'i' } },
+    ];
+  }
+
+  const [total, items] = await Promise.all([
+    FnCoinLedger.countDocuments(filter),
+    FnCoinLedger.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('user', 'name email referralCode')
+      .lean(),
+  ]);
+
+  return ok(res, {
+    items,
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  });
+});
+
+/* POST /api/admin/refer/test/grant-coins */
+export const grantAdminTestCoins = asyncHandler(async (req, res) => {
+  const { amount, reason = 'Admin testing' } = req.body;
+  const numAmount = parseInt(amount, 10);
+
+  if (!numAmount || Number.isNaN(numAmount) || numAmount <= 0) {
+    return fail(res, 'Amount must be a positive integer greater than 0', 400);
+  }
+  if (numAmount > 10000) {
+    return fail(res, 'Maximum test grant is 10,000 FN Coins per request', 400);
+  }
+
+  // Strictly target req.user._id (authenticated admin)
+  const user = await User.findById(req.user._id);
+  if (!user) return notFoundRes(res, 'Admin user not found');
+
+  const previousBalance = user.fnCoins || 0;
+  const newBalance = previousBalance + numAmount;
+  user.fnCoins = newBalance;
+  await user.save();
+
+  const ledgerEntry = await FnCoinLedger.create({
+    user: user._id,
+    type: 'admin_adjustment',
+    amount: numAmount,
+    balanceAfter: newBalance,
+    referenceModel: 'User',
+    referenceId: user._id,
+    description: reason ? `Admin test grant: ${reason.trim()} (+${numAmount} FN Coins)` : `Admin test grant: +${numAmount} FN Coins`,
+    metadata: {
+      source: 'admin_test_grant',
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      previousBalance,
+      newBalance,
+      isTest: true,
+      timestamp: new Date(),
+    },
+  });
+
+  return ok(res, {
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      fnCoins: user.fnCoins,
+    },
+    amountGranted: numAmount,
+    ledgerEntry,
+  }, `Successfully granted +${numAmount} FN Coins to your admin account`);
+});
+
+/* POST /api/admin/refer/test/reset-coins */
+export const resetAdminTestCoins = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) return notFoundRes(res, 'Admin user not found');
+
+  const currentCoins = user.fnCoins || 0;
+  if (currentCoins <= 0) {
+    return ok(res, { fnCoins: 0 }, 'Your FN Coins balance is already 0');
+  }
+
+  user.fnCoins = 0;
+  await user.save();
+
+  const ledgerEntry = await FnCoinLedger.create({
+    user: user._id,
+    type: 'admin_adjustment',
+    amount: -currentCoins,
+    balanceAfter: 0,
+    referenceModel: 'User',
+    referenceId: user._id,
+    description: `Admin test coins reset (-${currentCoins} FN Coins)`,
+    metadata: {
+      source: 'admin_test_reset',
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      previousBalance: currentCoins,
+      newBalance: 0,
+      isTest: true,
+      timestamp: new Date(),
+    },
+  });
+
+  return ok(res, {
+    fnCoins: 0,
+    deducted: currentCoins,
+    ledgerEntry,
+  }, `Reset admin test FN Coins to 0. (Recorded -${currentCoins} in ledger)`);
+});
+
+/* POST /api/admin/refer/users/:id/adjust-coins */
+export const adjustUserCoins = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { amount, reason } = req.body;
+  const numAmount = parseInt(amount, 10);
+
+  if (!numAmount || Number.isNaN(numAmount)) {
+    return fail(res, 'Amount must be a non-zero integer', 400);
+  }
+  if (!reason || !reason.trim()) {
+    return fail(res, 'Reason is required for manual coin adjustment', 400);
+  }
+
+  const user = await User.findById(id);
+  if (!user) return notFoundRes(res, 'Target user not found');
+
+  const previousBalance = user.fnCoins || 0;
+  const newBalance = Math.max(0, previousBalance + numAmount);
+  const actualDelta = newBalance - previousBalance;
+
+  user.fnCoins = newBalance;
+  await user.save();
+
+  const ledgerEntry = await FnCoinLedger.create({
+    user: user._id,
+    type: 'admin_adjustment',
+    amount: actualDelta,
+    balanceAfter: newBalance,
+    referenceModel: 'User',
+    referenceId: user._id,
+    description: `Admin adjustment: ${reason.trim()} (${actualDelta >= 0 ? '+' : ''}${actualDelta} FN Coins)`,
+    metadata: {
+      source: 'admin_manual_adjustment',
+      adminId: req.user._id,
+      adminEmail: req.user.email,
+      reason: reason.trim(),
+      previousBalance,
+      newBalance,
+      timestamp: new Date(),
+    },
+  });
+
+  return ok(res, {
+    user: { id: user._id, name: user.name, email: user.email, fnCoins: user.fnCoins },
+    delta: actualDelta,
+    ledgerEntry,
+  }, `Adjusted ${user.name}'s balance by ${actualDelta >= 0 ? '+' : ''}${actualDelta} FN Coins`);
+});
+
+/* POST /api/admin/refer/users/:id/bonus-spins */
+export const adjustUserBonusSpins = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { amount, reason } = req.body;
+  const numAmount = parseInt(amount, 10);
+
+  if (!numAmount || Number.isNaN(numAmount)) {
+    return fail(res, 'Amount must be a non-zero integer', 400);
+  }
+  if (!reason || !reason.trim()) {
+    return fail(res, 'Reason is required for bonus spins modification', 400);
+  }
+
+  const user = await User.findById(id);
+  if (!user) return notFoundRes(res, 'Target user not found');
+
+  const previousSpins = user.bonusSpins || 0;
+  const newSpins = Math.max(0, previousSpins + numAmount);
+  const delta = newSpins - previousSpins;
+
+  user.bonusSpins = newSpins;
+  await user.save();
+
+  return ok(res, {
+    user: { id: user._id, name: user.name, email: user.email, bonusSpins: user.bonusSpins },
+    delta,
+    previousSpins,
+    newSpins,
+  }, `${delta >= 0 ? 'Granted +' : 'Revoked '}${Math.abs(delta)} promotional spin(s) for ${user.name}`);
+});
+
+/* POST /api/admin/refer/test/spin */
+export const adminTestSpin = asyncHandler(async (req, res) => {
+  const { forcedSegmentId, deductCoins = false } = req.body;
+  const user = await User.findById(req.user._id);
+  if (!user) return notFoundRes(res, 'Admin user not found');
+
+  await ensureRewardConfigs();
+  const activeRewards = await RewardConfig.find({ isActive: true });
+
+  if (activeRewards.length === 0) {
+    return fail(res, 'No active reward segments configured', 400);
+  }
+
+  let winningReward = null;
+  if (forcedSegmentId) {
+    winningReward = activeRewards.find((r) => r.segmentId === forcedSegmentId);
+    if (!winningReward) {
+      return fail(res, `Segment with ID "${forcedSegmentId}" not found or inactive`, 404);
+    }
+  } else {
+    const eligibleRewards = activeRewards.filter((r) => r.probability > 0);
+    const totalWeight = eligibleRewards.reduce((sum, r) => sum + r.probability, 0);
+    const randomRoll = Math.random() * totalWeight;
+
+    let cumulative = 0;
+    winningReward = eligibleRewards[0];
+    for (const reward of eligibleRewards) {
+      cumulative += reward.probability;
+      if (randomRoll <= cumulative) {
+        winningReward = reward;
+        break;
+      }
+    }
+  }
+
+  let finalCoins = user.fnCoins || 0;
+  if (deductCoins) {
+    if (finalCoins >= 200) {
+      finalCoins -= 200;
+      user.fnCoins = finalCoins;
+      await user.save();
+      await FnCoinLedger.create({
+        user: user._id,
+        type: 'admin_adjustment',
+        amount: -200,
+        balanceAfter: finalCoins,
+        description: 'Admin test spin deduction (-200 FN Coins)',
+        metadata: { source: 'admin_test_spin', isTest: true },
+      });
+    }
+  }
+
+  // Create isolated test spin
+  const testSpin = await Spin.create({
+    user: user._id,
+    idempotencyKey: `test-spin-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    milestoneIndex: 0,
+    fnCoinsDeducted: deductCoins ? 200 : 0,
+    winningSegmentId: winningReward.segmentId,
+    reward: {
+      label: winningReward.label,
+      type: winningReward.type,
+      value: winningReward.value,
+    },
+    status: winningReward.type === 'fn_coins' || winningReward.type === 'none' ? 'credited' : 'under_review',
+    statusReason: 'Admin isolated test spin',
+    metadata: {
+      isTest: true,
+      testAdminId: req.user._id,
+      testTimestamp: new Date(),
+    },
+  });
+
+  return ok(res, {
+    spinId: testSpin._id.toString(),
+    winningSegmentId: winningReward.segmentId,
+    reward: winningReward,
+    fnCoinsRemaining: finalCoins,
+    isTest: true,
+  }, `Test spin completed: won "${winningReward.label}"`);
+});
+
+/* POST /api/admin/refer/referrals/:id/invalidate */
+export const invalidateReferral = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason = 'Identified as fraudulent referral' } = req.body;
+
+  const referral = await Referral.findById(id);
+  if (!referral) return notFoundRes(res, 'Referral not found');
+
+  if (referral.status === 'invalid') {
+    return ok(res, { referral }, 'Referral already invalidated');
+  }
+
+  const wasVerified = referral.status === 'verified';
+  referral.status = 'invalid';
+  referral.invalidatedAt = new Date();
+  referral.invalidationReason = reason;
+  referral.invalidatedBy = req.user._id;
+  await referral.save();
+
+  // If referral was previously verified, reverse the awarded FN Coins in ledger
+  if (wasVerified) {
+    const referrer = await User.findById(referral.referrer);
+    if (referrer) {
+      const deduction = referral.fnCoinsAwarded || 10;
+      const updatedCoins = Math.max(0, (referrer.fnCoins || 0) - deduction);
+      referrer.fnCoins = updatedCoins;
+      await referrer.save();
+
+      await FnCoinLedger.create({
+        user: referrer._id,
+        type: 'fraud_reversal',
+        amount: -deduction,
+        balanceAfter: updatedCoins,
+        referenceModel: 'Referral',
+        referenceId: referral._id,
+        description: `Fraud reversal: ${reason}`,
+        metadata: {
+          invalidatedBy: req.user._id,
+          reason,
+        },
+      });
+    }
+  }
+
+  return ok(res, { referral }, 'Referral invalidated and points reversed in ledger');
+});
+
+/* POST /api/admin/refer/referrals/:id/restore */
+export const restoreReferral = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason = 'Admin restored referral validity' } = req.body;
+
+  const referral = await Referral.findById(id);
+  if (!referral) return notFoundRes(res, 'Referral not found');
+
+  if (referral.status === 'verified') {
+    return ok(res, { referral }, 'Referral is already verified');
+  }
+
+  const previousStatus = referral.status;
+  referral.status = 'verified';
+  referral.invalidatedAt = null;
+  referral.invalidationReason = '';
+  referral.invalidatedBy = null;
+  await referral.save();
+
+  // Restore awarded FN Coins to referrer
+  const referrer = await User.findById(referral.referrer);
+  if (referrer) {
+    const coinsToRestore = referral.fnCoinsAwarded || 10;
+    const updatedCoins = (referrer.fnCoins || 0) + coinsToRestore;
+    referrer.fnCoins = updatedCoins;
+    await referrer.save();
+
+    await FnCoinLedger.create({
+      user: referrer._id,
+      type: 'admin_adjustment',
+      amount: coinsToRestore,
+      balanceAfter: updatedCoins,
+      referenceModel: 'Referral',
+      referenceId: referral._id,
+      description: `Referral restored by admin: ${reason}`,
+      metadata: {
+        adminId: req.user._id,
+        adminEmail: req.user.email,
+        previousStatus,
+        newStatus: 'verified',
+        reason,
+      },
+    });
+  }
+
+  return ok(res, { referral }, 'Referral restored to verified status and coins re-credited');
+});
+
+/* POST /api/admin/refer/referrals/:id/verify-registration */
+export const verifyReferralRegistration = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const {
+    verificationSource = 'manual_admin_verification',
+    registeredEventId = null,
+  } = req.body;
+
+  const referral = await Referral.findById(id);
+  if (!referral) return notFoundRes(res, 'Referral not found');
+
+  referral.eventStatus = 'registered';
+  referral.eventRegistrationVerificationSource = verificationSource;
+  referral.registeredEvent = registeredEventId;
+  referral.eventRegisteredAt = new Date();
+  await referral.save();
+
+  return ok(res, { referral }, 'Referral event registration verified');
+});
+
+/* POST /api/admin/refer/referrals/:id/unverify-registration */
+export const unverifyReferralRegistration = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const referral = await Referral.findById(id);
+  if (!referral) return notFoundRes(res, 'Referral not found');
+
+  referral.eventStatus = 'not_registered';
+  referral.eventRegistrationVerificationSource = null;
+  referral.registeredEvent = null;
+  referral.eventRegisteredAt = null;
+  await referral.save();
+
+  return ok(res, { referral }, 'Referral registration qualification reset to not_registered');
+});
+
+/* PATCH /api/admin/refer/referrals/:id/override */
+export const overrideReferralState = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { status, eventStatus, fnCoinsAwarded, reason } = req.body;
+
+  if (!reason || !reason.trim()) {
+    return fail(res, 'Reason is mandatory for operational overrides', 400);
+  }
+
+  const referral = await Referral.findById(id);
+  if (!referral) return notFoundRes(res, 'Referral not found');
+
+  const previousState = {
+    status: referral.status,
+    eventStatus: referral.eventStatus,
+    fnCoinsAwarded: referral.fnCoinsAwarded,
+  };
+
+  if (status && ['pending', 'verified', 'invalid'].includes(status)) {
+    referral.status = status;
+  }
+  if (eventStatus && ['registered', 'not_registered', 'pending'].includes(eventStatus)) {
+    referral.eventStatus = eventStatus;
+  }
+  if (typeof fnCoinsAwarded === 'number' && fnCoinsAwarded >= 0) {
+    referral.fnCoinsAwarded = fnCoinsAwarded;
+  }
+
+  await referral.save();
+
+  return ok(res, {
+    referral,
+    previousState,
+    reason: reason.trim(),
+    overriddenBy: req.user._id,
+  }, 'Referral state successfully overridden');
 });
 
 /* GET /api/admin/refer/rewards */
@@ -571,33 +1285,95 @@ export const listAdminRewards = asyncHandler(async (req, res) => {
   return ok(res, { rewards });
 });
 
+/* POST /api/admin/refer/rewards */
+export const createAdminReward = asyncHandler(async (req, res) => {
+  const { segmentId, label, type, value, probability, inventory, maxWinners, order, isActive } = req.body;
+
+  if (!segmentId || !segmentId.trim()) return fail(res, 'Segment ID is required', 400);
+  if (!label || !label.trim()) return fail(res, 'Label is required', 400);
+  if (!['cash', 'fn_coins', 'merch', 'bonus_spin', 'none'].includes(type)) {
+    return fail(res, 'Invalid reward type', 400);
+  }
+  if (probability === undefined || probability < 0) {
+    return fail(res, 'Probability must be a non-negative number', 400);
+  }
+
+  const existing = await RewardConfig.findOne({ segmentId: segmentId.trim() });
+  if (existing) return fail(res, 'A segment with this ID already exists', 409);
+
+  const reward = await RewardConfig.create({
+    segmentId: segmentId.trim(),
+    label: label.trim(),
+    type,
+    value: value !== undefined && value !== null && value !== '' ? Number(value) : null,
+    probability: Number(probability),
+    inventory: inventory !== undefined && inventory !== null && inventory !== '' ? Number(inventory) : null,
+    maxWinners: maxWinners !== undefined && maxWinners !== null && maxWinners !== '' ? Number(maxWinners) : null,
+    order: order !== undefined && order !== '' ? Number(order) : 0,
+    isActive: isActive !== undefined ? Boolean(isActive) : true,
+  });
+
+  return created(res, { reward }, 'Reward segment created successfully');
+});
+
 /* PATCH /api/admin/refer/rewards/:id */
 export const updateAdminReward = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { label, probability, isActive, inventory, maxWinners, order } = req.body;
+  const { label, type, value, probability, isActive, inventory, maxWinners, order } = req.body;
 
   const reward = await RewardConfig.findById(id);
   if (!reward) return notFoundRes(res, 'Reward not found');
 
   if (label !== undefined) reward.label = label.trim();
+  if (type !== undefined && ['cash', 'fn_coins', 'merch', 'bonus_spin', 'none'].includes(type)) {
+    reward.type = type;
+  }
+  if (value !== undefined) reward.value = value === null || value === '' ? null : Number(value);
   if (probability !== undefined) reward.probability = Number(probability);
   if (isActive !== undefined) reward.isActive = Boolean(isActive);
-  if (inventory !== undefined) reward.inventory = inventory === null ? null : Number(inventory);
-  if (maxWinners !== undefined) reward.maxWinners = maxWinners === null ? null : Number(maxWinners);
+  if (inventory !== undefined) reward.inventory = inventory === null || inventory === '' ? null : Number(inventory);
+  if (maxWinners !== undefined) reward.maxWinners = maxWinners === null || maxWinners === '' ? null : Number(maxWinners);
   if (order !== undefined) reward.order = Number(order);
 
   await reward.save();
-  return ok(res, { reward }, 'Reward updated');
+  return ok(res, { reward }, 'Reward updated successfully');
+});
+
+/* DELETE /api/admin/refer/rewards/:id */
+export const deleteAdminReward = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const reward = await RewardConfig.findByIdAndDelete(id);
+  if (!reward) return notFoundRes(res, 'Reward not found');
+  return ok(res, { id }, 'Reward deleted successfully');
 });
 
 /* GET /api/admin/refer/spins */
 export const listAdminSpins = asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
-  const status = req.query.status;
+  const { status, type, search } = req.query;
 
   const filter = {};
   if (status) filter.status = status;
+  if (type) filter['reward.type'] = type;
+
+  if (search && search.trim()) {
+    const s = search.trim();
+    const matchingUsers = await User.find({
+      $or: [
+        { name: { $regex: s, $options: 'i' } },
+        { email: { $regex: s, $options: 'i' } },
+      ],
+    })
+      .select('_id')
+      .lean();
+
+    const userIds = matchingUsers.map((u) => u._id);
+    filter.$or = [
+      { user: { $in: userIds } },
+      { 'reward.label': { $regex: s, $options: 'i' } },
+    ];
+  }
 
   const [total, spins] = await Promise.all([
     Spin.countDocuments(filter),
@@ -605,13 +1381,13 @@ export const listAdminSpins = asyncHandler(async (req, res) => {
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
-      .populate('user', 'name email phone')
+      .populate('user', 'name email phone referralCode')
       .populate('processedBy', 'name email')
       .lean(),
   ]);
 
   return ok(res, {
-    spins,
+    items: spins,
     total,
     page,
     pages: Math.ceil(total / limit),
@@ -640,7 +1416,7 @@ export const updateAdminSpinStatus = asyncHandler(async (req, res) => {
   if (!spin) return notFoundRes(res, 'Spin not found');
 
   spin.status = status;
-  spin.statusReason = statusReason || spin.statusReason;
+  if (statusReason) spin.statusReason = statusReason.trim();
   spin.processedBy = req.user._id;
   spin.processedAt = new Date();
   if (payoutDetails) {
@@ -648,72 +1424,40 @@ export const updateAdminSpinStatus = asyncHandler(async (req, res) => {
   }
 
   await spin.save();
-  return ok(res, { spin }, 'Spin status updated');
+  return ok(res, { spin }, `Spin status updated to "${status}"`);
 });
 
-/* POST /api/admin/refer/referrals/:id/invalidate */
-export const invalidateReferral = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { reason = 'Identified as fraudulent referral' } = req.body;
-
-  const referral = await Referral.findById(id);
-  if (!referral) return notFoundRes(res, 'Referral not found');
-
-  if (referral.status === 'invalid') {
-    return ok(res, { referral }, 'Referral already invalidated');
-  }
-
-  const wasVerified = referral.status === 'verified';
-  referral.status = 'invalid';
-  referral.invalidatedAt = new Date();
-  referral.invalidationReason = reason;
-  referral.invalidatedBy = req.user._id;
-  await referral.save();
-
-  // If referral was previously verified, reverse the 10 FN Coins in ledger
-  if (wasVerified) {
-    const referrer = await User.findById(referral.referrer);
-    if (referrer) {
-      const updatedCoins = Math.max(0, (referrer.fnCoins || 0) - 10);
-      referrer.fnCoins = updatedCoins;
-      await referrer.save();
-
-      await FnCoinLedger.create({
-        user: referrer._id,
-        type: 'fraud_reversal',
-        amount: -10,
-        balanceAfter: updatedCoins,
-        referenceModel: 'Referral',
-        referenceId: referral._id,
-        description: `Fraud reversal: ${reason}`,
-        metadata: {
-          invalidatedBy: req.user._id,
-          reason,
-        },
-      });
-    }
-  }
-
-  return ok(res, { referral }, 'Referral invalidated and points reversed in ledger');
+/* GET /api/admin/refer/settings */
+export const getAdminReferSettings = asyncHandler(async (req, res) => {
+  const settings = await getReferSettings();
+  return ok(res, { settings });
 });
 
-/* POST /api/admin/refer/referrals/:id/verify-registration */
-export const verifyReferralRegistration = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+/* PATCH /api/admin/refer/settings */
+export const updateAdminReferSettings = asyncHandler(async (req, res) => {
   const {
-    verificationSource = 'manual_admin_verification',
-    registeredEventId = null,
+    coinsPerReferral,
+    coinsPerSpin,
+    referralsPerMilestone,
+    registrationsPerMilestone,
+    programActive,
   } = req.body;
 
-  const referral = await Referral.findById(id);
-  if (!referral) return notFoundRes(res, 'Referral not found');
+  let settings = await ReferSettings.findOne();
+  if (!settings) {
+    settings = new ReferSettings();
+  }
 
-  referral.eventStatus = 'registered';
-  referral.eventRegistrationVerificationSource = verificationSource;
-  referral.registeredEvent = registeredEventId;
-  referral.eventRegisteredAt = new Date();
-  await referral.save();
+  if (coinsPerReferral !== undefined) settings.coinsPerReferral = Math.max(1, Number(coinsPerReferral));
+  if (coinsPerSpin !== undefined) settings.coinsPerSpin = Math.max(10, Number(coinsPerSpin));
+  if (referralsPerMilestone !== undefined) settings.referralsPerMilestone = Math.max(1, Number(referralsPerMilestone));
+  if (registrationsPerMilestone !== undefined) settings.registrationsPerMilestone = Math.max(1, Number(registrationsPerMilestone));
+  if (programActive !== undefined) settings.programActive = Boolean(programActive);
 
-  return ok(res, { referral }, 'Referral event registration verified');
+  settings.updatedBy = req.user._id;
+  await settings.save();
+
+  return ok(res, { settings }, 'Referral settings updated successfully');
 });
+
 

@@ -16,12 +16,28 @@ import {
 } from '../controllers/adminController.js';
 import {
   getAdminReferStats,
+  listAdminReferrals,
+  getAdminReferralDetail,
+  getAdminUserReferProfile,
+  listAdminLedger,
+  grantAdminTestCoins,
+  resetAdminTestCoins,
+  adjustUserCoins,
+  adjustUserBonusSpins,
+  adminTestSpin,
+  invalidateReferral,
+  restoreReferral,
+  verifyReferralRegistration,
+  unverifyReferralRegistration,
+  overrideReferralState,
   listAdminRewards,
+  createAdminReward,
   updateAdminReward,
+  deleteAdminReward,
   listAdminSpins,
   updateAdminSpinStatus,
-  invalidateReferral,
-  verifyReferralRegistration,
+  getAdminReferSettings,
+  updateAdminReferSettings,
 } from '../controllers/referController.js';
 import {
   validate, validateAdminCreateEvent, validateAdjustPoints,
@@ -86,13 +102,44 @@ router.get('/feedback/:id',     getFeedback);
 router.delete('/feedback/:id',  deleteFeedback);
 
 /* ── Refer & Earn + FN Coins + Spin Wheel ── */
+// Stats & Overview
 router.get('/refer/stats',                              getAdminReferStats);
+
+// Referrals
+router.get('/refer/referrals',                          listAdminReferrals);
+router.get('/refer/referrals/:id',                      getAdminReferralDetail);
+router.post('/refer/referrals/:id/invalidate',          invalidateReferral);
+router.post('/refer/referrals/:id/restore',             restoreReferral);
+router.post('/refer/referrals/:id/verify-registration', verifyReferralRegistration);
+router.post('/refer/referrals/:id/unverify-registration', unverifyReferralRegistration);
+router.patch('/refer/referrals/:id/override',           overrideReferralState);
+
+// User Refer Profile & Operations
+router.get('/refer/users/:id',                          getAdminUserReferProfile);
+router.post('/refer/users/:id/adjust-coins',            adjustUserCoins);
+router.post('/refer/users/:id/bonus-spins',             adjustUserBonusSpins);
+
+// Ledger
+router.get('/refer/ledger',                             listAdminLedger);
+
+// Admin Self-Testing & Diagnostic Tools
+router.post('/refer/test/grant-coins',                  grantAdminTestCoins);
+router.post('/refer/test/reset-coins',                  resetAdminTestCoins);
+router.post('/refer/test/spin',                         adminTestSpin);
+
+// Reward Wheel Config Management
 router.get('/refer/rewards',                            listAdminRewards);
+router.post('/refer/rewards',                           createAdminReward);
 router.patch('/refer/rewards/:id',                      updateAdminReward);
+router.delete('/refer/rewards/:id',                     deleteAdminReward);
+
+// Spins & Cash Payouts
 router.get('/refer/spins',                              listAdminSpins);
 router.patch('/refer/spins/:id/status',                 updateAdminSpinStatus);
-router.post('/refer/referrals/:id/invalidate',          invalidateReferral);
-router.post('/refer/referrals/:id/verify-registration', verifyReferralRegistration);
+
+// Program Rules & Configuration
+router.get('/refer/settings',                           getAdminReferSettings);
+router.patch('/refer/settings',                         updateAdminReferSettings);
 
 export default router;
 
