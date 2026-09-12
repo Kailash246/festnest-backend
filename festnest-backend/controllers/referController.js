@@ -149,6 +149,10 @@ export const getReferralSummary = asyncHandler(async (req, res) => {
     {
       referralCode: refCode,
       referralLink,
+      fnCoins: {
+        available: user.fnCoins || 0,
+        required: 200,
+      },
       points: {
         available: user.fnCoins || 0,
         required: 200,
@@ -235,8 +239,7 @@ export const getWheelConfig = asyncHandler(async (req, res) => {
   const segments = configs.map((c) => ({
     id: c.segmentId,
     label: c.label,
-    // Map fn_coins to 'points' type so ReferAndEarn.jsx REWARD_TYPE_ICON displays Coins icon
-    type: c.type === 'fn_coins' ? 'points' : c.type,
+    type: c.type,
   }));
 
   return ok(res, { segments }, 'Wheel configuration');
@@ -489,9 +492,10 @@ export const spinWheel = asyncHandler(async (req, res) => {
       winningSegmentId: winningReward.segmentId,
       reward: {
         label: winningReward.label,
-        type: winningReward.type === 'fn_coins' ? 'points' : winningReward.type,
+        type: winningReward.type,
         value: winningReward.value,
       },
+      fnCoinsRemaining: finalUserCoins,
       pointsRemaining: finalUserCoins,
       spinsRemaining: postSpinsCalc.availableSpins,
     },
