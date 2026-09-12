@@ -15,6 +15,15 @@ import {
   listFeedback, getFeedback, deleteFeedback,
 } from '../controllers/adminController.js';
 import {
+  getAdminReferStats,
+  listAdminRewards,
+  updateAdminReward,
+  listAdminSpins,
+  updateAdminSpinStatus,
+  invalidateReferral,
+  verifyReferralRegistration,
+} from '../controllers/referController.js';
+import {
   validate, validateAdminCreateEvent, validateAdjustPoints,
   validateAddCollege, validateBroadcast,
 } from '../middleware/validate.js';
@@ -75,6 +84,15 @@ router.patch('/ca/:id/adjust',  adjustAmbassadorStats);
 router.get('/feedback',         listFeedback);
 router.get('/feedback/:id',     getFeedback);
 router.delete('/feedback/:id',  deleteFeedback);
+
+/* ── Refer & Earn + FN Coins + Spin Wheel ── */
+router.get('/refer/stats',                              getAdminReferStats);
+router.get('/refer/rewards',                            listAdminRewards);
+router.patch('/refer/rewards/:id',                      updateAdminReward);
+router.get('/refer/spins',                              listAdminSpins);
+router.patch('/refer/spins/:id/status',                 updateAdminSpinStatus);
+router.post('/refer/referrals/:id/invalidate',          invalidateReferral);
+router.post('/refer/referrals/:id/verify-registration', verifyReferralRegistration);
 
 export default router;
 

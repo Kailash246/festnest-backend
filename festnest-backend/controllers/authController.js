@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import CAReferralLog from '../models/CAReferralLog.js';
+import { Referral, FnCoinLedger, Notification } from '../models/index.js';
 import OTP           from '../models/OTP.js';
 import RefreshToken  from '../models/RefreshToken.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, refreshTokenExpiry } from '../utils/jwt.js';
@@ -183,6 +184,65 @@ export const register = asyncHandler(async (req, res) => {
     } catch (caErr) {
       console.error('[CA Referral Attribution Error on Signup]', caErr.message);
       // must never affect user registration response
+    }
+  }
+
+  // Check for Peer-to-Peer Refer & Earn attribution (FN Coins)
+  if (refToLookup) {
+    try {
+      const referrerUser = await User.findOne({ referralCode: refToLookup });
+      if (
+        referrerUser &&
+        !referrerUser._id.equals(user._id) &&
+        referrerUser.email.toLowerCase() !== user.email.toLowerCase()
+      ) {
+        // Check if referral record already exists (enforces single referrer)
+        const existingRef = await Referral.findOne({ referredUser: user._id });
+        if (!existingRef) {
+          const referral = await Referral.create({
+            referrer: referrerUser._id,
+            referredUser: user._id,
+            status: 'verified', // Verified because OTP was verified right before user creation
+            fnCoinsAwarded: 10,
+            eventStatus: 'not_registered',
+            signupIp: clientInfo(req).ip,
+            userAgent: clientInfo(req).userAgent,
+          });
+
+          const updatedReferrer = await User.findByIdAndUpdate(
+            referrerUser._id,
+            { $inc: { fnCoins: 10 } },
+            { new: true }
+          );
+
+          await FnCoinLedger.create({
+            user: referrerUser._id,
+            type: 'referral_reward',
+            amount: 10,
+            balanceAfter: updatedReferrer.fnCoins,
+            referenceModel: 'Referral',
+            referenceId: referral._id,
+            description: `Referral reward for ${user.name}`,
+            metadata: {
+              referredUserId: user._id,
+              referredUserName: user.name,
+              referralCode: refToLookup,
+            },
+          });
+
+          await Notification.create({
+            user: referrerUser._id,
+            type: 'updates',
+            icon: '🎁',
+            bg: 'bg-[#EEF2FF]',
+            title: '10 FN Coins earned!',
+            sub: `${user.name} joined FestNest with your referral link.`,
+          });
+        }
+      }
+    } catch (refErr) {
+      console.error('[User Referral Attribution Error on Signup]', refErr.message);
+      // Must never affect user registration response
     }
   }
 

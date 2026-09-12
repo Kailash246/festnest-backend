@@ -3,7 +3,7 @@ import mongoose     from 'mongoose';
 import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
-import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog } from '../models/index.js';
+import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog, Referral } from '../models/index.js';
 import { calculateTier } from './caController.js';
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
@@ -685,6 +685,20 @@ export const registerForEvent = asyncHandler(async (req, res) => {
   // Confirmation email (non-blocking)
   sendRegistrationConfirmEmail(req.user.email, req.user.name, event.name, event.college)
     .catch(err => console.error('Email error:', err.message));
+
+  // Observe if this registering user was referred by someone (qualifying event registration for Refer & Earn)
+  try {
+    const referralRecord = await Referral.findOne({ referredUser: req.user._id });
+    if (referralRecord && referralRecord.eventStatus !== 'registered') {
+      referralRecord.eventStatus = 'registered';
+      referralRecord.eventRegistrationVerificationSource = 'festnest_registration';
+      referralRecord.registeredEvent = event._id;
+      referralRecord.eventRegisteredAt = new Date();
+      await referralRecord.save();
+    }
+  } catch (refErr) {
+    console.error('[Referral Registration Status Update Error]', refErr.message);
+  }
 
   return created(res, { registration, pointsEarned: 50 }, 'Registered successfully');
 });
