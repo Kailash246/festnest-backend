@@ -24,6 +24,8 @@ import caAdminRoutes     from './routes/campusAmbassador.js';
 import feedbackRoutes    from './routes/feedback.js';
 import aiRoutes          from './routes/ai.js';
 import referRoutes       from './routes/refer.js';
+import activityRoutes    from './routes/activity.js';
+
 
 /* ── Connect to MongoDB Atlas ── */
 await connectDB();
@@ -97,8 +99,9 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'x-session-id'],
   exposedHeaders: ['X-Total-Count'],
+
 }));
 
 /* ── Logging & body parsing ── */
@@ -162,6 +165,8 @@ app.use('/api/admin',         adminRoutes);
 app.use('/api/ca',            caRoutes);
 app.use('/api/ai',            aiRoutes);
 app.use('/api/refer',         referRoutes);
+app.use('/api/activity',      activityRoutes);
+
 
 /* ── Feedback rate limiter (5 submissions / 15 min per IP) ── */
 const feedbackLimiter = rateLimit({

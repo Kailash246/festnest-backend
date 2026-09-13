@@ -1,7 +1,7 @@
 // controllers/usersController.js
 import sanitizeHtml from 'sanitize-html';
 import User     from '../models/User.js';
-import { SavedEvent, Registration, PointsLog, HostedEvent } from '../models/index.js';
+import { SavedEvent, Registration, PointsLog, HostedEvent, Activity } from '../models/index.js';
 import { cloudinary, uploadUserAvatar } from '../config/cloudinary.js';
 import { ok, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 
@@ -39,8 +39,22 @@ export const updateMe = asyncHandler(async (req, res) => {
   if (notificationPrefs)               updates.notificationPrefs = notificationPrefs;
 
   const user = await User.findByIdAndUpdate(req.user._id, updates, { new: true, runValidators: true });
+
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: req.user._id,
+    sessionId,
+    type: 'profile_update',
+    action: 'update_profile',
+    page: { path: '/profile', title: 'Profile' },
+    metadata: { updatedFields: Object.keys(updates) },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging profile update:', err.message));
+
   return ok(res, { user: user.toPublic() }, 'Profile updated');
 });
+
 
 export const uploadAvatar = asyncHandler(async (req, res) => {
   if (!req.file) return fail(res, 'No image uploaded');

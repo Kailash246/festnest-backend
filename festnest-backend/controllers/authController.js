@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import CAReferralLog from '../models/CAReferralLog.js';
-import { Referral, FnCoinLedger, Notification } from '../models/index.js';
+import { Referral, FnCoinLedger, Notification, Activity } from '../models/index.js';
 import OTP           from '../models/OTP.js';
+
 import RefreshToken  from '../models/RefreshToken.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken, refreshTokenExpiry } from '../utils/jwt.js';
 import { sendOTPEmail, sendPasswordResetEmail } from '../utils/email.js';
@@ -238,9 +239,42 @@ export const register = asyncHandler(async (req, res) => {
             title: '10 FN Coins earned!',
             sub: `${user.name} joined FestNest with your referral link.`,
           });
+
+          // Track referral use for the new user
+          const sessionId = req.headers['x-session-id'] || null;
+          Activity.create({
+            user: user._id,
+            sessionId,
+            type: 'referral_use',
+            action: 'apply_referral',
+            metadata: {
+              referrerId: referrerUser._id,
+              referralCode: refToLookup,
+              referralId: referral._id,
+            },
+            ip: clientInfo(req).ip,
+            userAgent: clientInfo(req).userAgent,
+          }).catch(err => console.error('[Activity] Error logging referral use:', err.message));
+
+          // Track coin transaction for the referrer
+          Activity.create({
+            user: referrerUser._id,
+            sessionId: null,
+            type: 'coin_transaction',
+            action: 'referral_reward',
+            metadata: {
+              amount: 10,
+              referredUserId: user._id,
+              referralCode: refToLookup,
+              balanceAfter: updatedReferrer.fnCoins,
+            },
+            ip: clientInfo(req).ip,
+            userAgent: clientInfo(req).userAgent,
+          }).catch(err => console.error('[Activity] Error logging referral coin reward:', err.message));
         }
       }
     } catch (refErr) {
+
       console.error('[User Referral Attribution Error on Signup]', refErr.message);
       // Must never affect user registration response
     }

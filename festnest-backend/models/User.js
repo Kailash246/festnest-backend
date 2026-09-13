@@ -52,9 +52,15 @@ const userSchema = new mongoose.Schema(
       updates:   { type: Boolean, default: true },
       system:    { type: Boolean, default: true },
     },
+
+    lastLoginAt:  { type: Date, default: null },
+    lastActiveAt: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 );
+
+userSchema.index({ lastActiveAt: -1 });
+
 
 /* ── Hash password before save ── */
 userSchema.pre('save', async function (next) {

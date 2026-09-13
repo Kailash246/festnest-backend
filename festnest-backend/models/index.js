@@ -200,3 +200,6 @@ export { FnCoinLedger } from './FnCoinLedger.js';
 export { Spin } from './Spin.js';
 export { RewardConfig } from './RewardConfig.js';
 export { ReferSettings } from './ReferSettings.js';
+export { default as Session } from './Session.js';
+export { default as Activity } from './Activity.js';
+

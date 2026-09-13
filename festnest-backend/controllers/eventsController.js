@@ -3,8 +3,9 @@ import mongoose     from 'mongoose';
 import sanitizeHtml from 'sanitize-html';
 import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
-import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog, Referral } from '../models/index.js';
+import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog, Referral, Activity } from '../models/index.js';
 import { calculateTier } from './caController.js';
+
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
 import { sendRegistrationConfirmEmail } from '../utils/email.js';
@@ -643,6 +644,19 @@ export const saveEvent = asyncHandler(async (req, res) => {
     { user: req.user._id, event: event._id },
     { upsert: true, new: true }
   );
+
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: req.user._id,
+    sessionId,
+    type: 'wishlist',
+    action: 'save_event',
+    page: { path: `/event/${event.slug}`, title: event.name },
+    metadata: { eventId: event._id, eventSlug: event.slug, eventName: event.name },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging wishlist save:', err.message));
+
   return ok(res, { saved: true }, 'Event saved');
 });
 
@@ -651,9 +665,23 @@ export const saveEvent = asyncHandler(async (req, res) => {
 ──────────────────────────────────────────────────────── */
 export const unsaveEvent = asyncHandler(async (req, res) => {
   const event = await Event.findOne({ slug: req.params.slug });
-  if (event) await SavedEvent.deleteOne({ user: req.user._id, event: event._id });
+  if (event) {
+    await SavedEvent.deleteOne({ user: req.user._id, event: event._id });
+    const sessionId = req.headers['x-session-id'] || null;
+    Activity.create({
+      user: req.user._id,
+      sessionId,
+      type: 'wishlist',
+      action: 'unsave_event',
+      page: { path: `/event/${event.slug}`, title: event.name },
+      metadata: { eventId: event._id, eventSlug: event.slug, eventName: event.name },
+      ip: req.ip || '',
+      userAgent: req.headers['user-agent'] || '',
+    }).catch(err => console.error('[Activity] Error logging wishlist unsave:', err.message));
+  }
   return ok(res, { saved: false }, 'Event removed from saved');
 });
+
 
 /* ────────────────────────────────────────────────────────
    POST /api/events/:slug/register   (auth required)
@@ -700,8 +728,27 @@ export const registerForEvent = asyncHandler(async (req, res) => {
     console.error('[Referral Registration Status Update Error]', refErr.message);
   }
 
+  // Track activity
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: req.user._id,
+    sessionId,
+    type: 'event_registration',
+    action: 'register',
+    page: { path: `/event/${event.slug}`, title: event.name },
+    metadata: {
+      eventId: event._id,
+      eventSlug: event.slug,
+      eventName: event.name,
+      college: event.college,
+    },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging event registration:', err.message));
+
   return created(res, { registration, pointsEarned: 50 }, 'Registered successfully');
 });
+
 
 /* ────────────────────────────────────────────────────────
    DELETE /api/events/:slug/register   (auth required)
@@ -815,8 +862,27 @@ export const hostEvent = asyncHandler(async (req, res) => {
     }
   }
 
+  // Track activity
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: req.user._id,
+    sessionId,
+    type: 'event_creation',
+    action: 'host_event',
+    page: { path: '/host', title: 'Host Event' },
+    metadata: {
+      hostedEventId: hosted._id,
+      eventName: hosted.eventName,
+      college: hosted.college,
+      eventType: hosted.eventType,
+    },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging event creation:', err.message));
+
   return created(res, { hostedEvent: hosted, pointsEarned: 300 }, 'Event submitted for review');
 });
+
 
 /* ────────────────────────────────────────────────────────
    GET /api/events/stats

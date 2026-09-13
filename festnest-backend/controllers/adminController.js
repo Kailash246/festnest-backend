@@ -3,7 +3,8 @@ import Event      from '../models/Event.js';
 import User       from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
-         SupportTicket, PointsLog, College, Feedback, CAReferralLog } from '../models/index.js';
+         SupportTicket, PointsLog, College, Feedback, CAReferralLog, Activity } from '../models/index.js';
+
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
@@ -341,7 +342,20 @@ export const createEvent = asyncHandler(async (req, res) => {
     + '-' + Date.now().toString(36);
 
   const event = await Event.create({ ...req.body, slug });
+
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: req.user._id,
+    sessionId,
+    type: 'event_creation',
+    action: 'admin_create_event',
+    metadata: { eventId: event._id, slug: event.slug, name: event.name },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging admin event create:', err.message));
+
   return created(res, { event }, 'Event created');
+
 });
 
 /** PATCH /api/admin/events/:id  — edit any field */

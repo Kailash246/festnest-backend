@@ -1,8 +1,9 @@
 // controllers/referController.js
 import crypto from 'node:crypto';
 import User from '../models/User.js';
-import { Referral, FnCoinLedger, Spin, RewardConfig, ReferSettings } from '../models/index.js';
+import { Referral, FnCoinLedger, Spin, RewardConfig, ReferSettings, Activity } from '../models/index.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
+
 
 /* ─── Default seed for wheel configuration ─────────────────── */
 const DEFAULT_REWARDS = [
@@ -531,6 +532,26 @@ export const spinWheel = asyncHandler(async (req, res) => {
     consumedMilestones: nextMilestoneIndex,
   });
 
+  // Track activity
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: user._id,
+    sessionId,
+    type: 'coin_transaction',
+    action: 'spin_wheel',
+    page: { path: '/refer', title: 'Refer & Earn' },
+    metadata: {
+      spinId: spinRecord._id,
+      fnCoinsDeducted: 200,
+      rewardType: winningReward.type,
+      rewardLabel: winningReward.label,
+      rewardValue: winningReward.value,
+      balanceAfter: finalUserCoins,
+    },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging spin coin transaction:', err.message));
+
   return ok(
     res,
     {
@@ -548,6 +569,7 @@ export const spinWheel = asyncHandler(async (req, res) => {
     'Spin successful'
   );
 });
+
 
 /* ────────────────────────────────────────────────────────
    ADMIN ENDPOINTS — SUPREME OPERATIONAL CONTROL
@@ -900,6 +922,17 @@ export const grantAdminTestCoins = asyncHandler(async (req, res) => {
     },
   });
 
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: user._id,
+    sessionId,
+    type: 'coin_transaction',
+    action: 'grant_test_coins',
+    metadata: { amount: numAmount, balanceAfter: newBalance },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging grant test coins:', err.message));
+
   return ok(res, {
     user: {
       id: user._id,
@@ -943,6 +976,17 @@ export const resetAdminTestCoins = asyncHandler(async (req, res) => {
       timestamp: new Date(),
     },
   });
+
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: user._id,
+    sessionId,
+    type: 'coin_transaction',
+    action: 'reset_test_coins',
+    metadata: { deducted: currentCoins, balanceAfter: 0 },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging reset test coins:', err.message));
 
   return ok(res, {
     fnCoins: 0,
@@ -993,12 +1037,24 @@ export const adjustUserCoins = asyncHandler(async (req, res) => {
     },
   });
 
+  const sessionId = req.headers['x-session-id'] || null;
+  Activity.create({
+    user: user._id,
+    sessionId,
+    type: 'coin_transaction',
+    action: 'adjust_user_coins',
+    metadata: { delta: actualDelta, balanceAfter: newBalance, reason: reason.trim(), adjustedBy: req.user._id },
+    ip: req.ip || '',
+    userAgent: req.headers['user-agent'] || '',
+  }).catch(err => console.error('[Activity] Error logging adjust user coins:', err.message));
+
   return ok(res, {
     user: { id: user._id, name: user.name, email: user.email, fnCoins: user.fnCoins },
     delta: actualDelta,
     ledgerEntry,
   }, `Adjusted ${user.name}'s balance by ${actualDelta >= 0 ? '+' : ''}${actualDelta} FN Coins`);
 });
+
 
 /* POST /api/admin/refer/users/:id/bonus-spins */
 export const adjustUserBonusSpins = asyncHandler(async (req, res) => {

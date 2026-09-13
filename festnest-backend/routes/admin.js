@@ -41,11 +41,16 @@ import {
   updateAdminReferSettings,
 } from '../controllers/referController.js';
 import {
+  listUserActivities,
+  getUserActivityDetail,
+} from '../controllers/adminActivityController.js';
+import {
   validate, validateAdminCreateEvent, validateAdjustPoints,
   validateAddCollege, validateBroadcast,
 } from '../middleware/validate.js';
 
 const router = Router();
+
 
 // All admin routes require at minimum admin role
 router.use(requireAdmin);
@@ -145,5 +150,10 @@ router.patch('/refer/spins/:id/status',                 updateAdminSpinStatus);
 router.get('/refer/settings',                           getAdminReferSettings);
 router.patch('/refer/settings',                         updateAdminReferSettings);
 
+/* ── User Activity & Analytics ── */
+router.get('/activity/users',         listUserActivities);
+router.get('/activity/users/:userId', getUserActivityDetail);
+
 export default router;
+
 
