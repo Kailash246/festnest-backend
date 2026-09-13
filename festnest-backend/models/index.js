@@ -105,6 +105,11 @@ const hostedEventSchema = new mongoose.Schema(
       publicId: { type: String, default: '' },
     },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    // Terms & Brand Permission Acceptance
+    termsVersion:                  { type: String, default: '2026-09' },
+    termsAcceptedAt:              { type: Date, default: Date.now },
+    termsAcceptedBy:              { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    institutionAuthorityConfirmed:{ type: Boolean, default: true },
   },
   { timestamps: true }
 );
@@ -148,11 +153,21 @@ const collegeSchema = new mongoose.Schema(
     city:       { type: String, required: true },
     state:      { type: String, required: true },
     logoEmoji:  { type: String, default: '🏛️' },
+    logoUrl:    { type: String, default: '' },
+    logoPublicId:{ type: String, default: '' },
     pastEvents: { type: Number, default: 0 },
+    hasPublishedEvent:         { type: Boolean, default: false },
+    marketingEligible:         { type: Boolean, default: false },
+    isMarketingDisplayAllowed: { type: Boolean, default: true },
+    termsVersionAccepted:      { type: String, default: null },
+    removalRequested:          { type: Boolean, default: false },
+    removalRequestReason:      { type: String, default: '' },
+    removalRequestedAt:        { type: Date, default: null },
   },
   { timestamps: true }
 );
 collegeSchema.index({ name: 'text', city: 'text' });
+collegeSchema.index({ hasPublishedEvent: 1, marketingEligible: 1, isMarketingDisplayAllowed: 1 });
 export const College = mongoose.model('College', collegeSchema);
 
 // ─────────────────────────────────────────────────

@@ -191,12 +191,49 @@ export const approveSubmission = asyncHandler(async (req, res) => {
     isApproved:      true,
     isFeatured:      overrides.isFeatured    === true,
     featuredOrder:   typeof overrides.featuredOrder === 'number' ? overrides.featuredOrder : 0,
+
+    // Audit fields for institution representation & Terms acceptance
+    termsVersion:                  submission.termsVersion || '2026-09',
+    termsAcceptedAt:              submission.termsAcceptedAt || new Date(),
+    termsAcceptedBy:              submission.submittedBy._id,
+    institutionAuthorityConfirmed: submission.institutionAuthorityConfirmed !== false,
   });
 
   // Link back to submission
   submission.status      = 'approved';
   submission.linkedEvent = event._id;
   await submission.save();
+
+  // Automatic eligibility for College marketing brand display under Terms 2026-09
+  const collegeName = (submission.college || '').trim();
+  if (collegeName) {
+    const isNewTerms = (submission.termsVersion || '2026-09') === '2026-09';
+    const publishedCount = await Event.countDocuments({ college: collegeName, isActive: true, isApproved: true });
+    const collegeUpdate = {
+      hasPublishedEvent: true,
+      pastEvents: publishedCount,
+    };
+    if (isNewTerms) {
+      collegeUpdate.marketingEligible = true;
+      collegeUpdate.termsVersionAccepted = submission.termsVersion || '2026-09';
+    }
+
+    const escapedName = collegeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    await College.findOneAndUpdate(
+      { name: { $regex: new RegExp(`^${escapedName}$`, 'i') } },
+      {
+        $set: collegeUpdate,
+        $setOnInsert: {
+          name: collegeName,
+          city: submission.city || '',
+          state: overrides.state || '',
+          logoEmoji: '🏛️',
+          isMarketingDisplayAllowed: true,
+        },
+      },
+      { upsert: true, new: true }
+    );
+  }
 
   // In-app notification to submitter
   await Notification.create({
@@ -1001,5 +1038,122 @@ export const deleteFeedback = asyncHandler(async (req, res) => {
   const item = await Feedback.findByIdAndDelete(req.params.id);
   if (!item) return notFoundRes(res, 'Feedback not found');
   return ok(res, {}, 'Feedback entry deleted');
+});
+
+/* ═══════════════════════════════════════════════════════════
+   INSTITUTION BRAND DISPLAY & PERMISSIONS MANAGEMENT
+═══════════════════════════════════════════════════════════ */
+
+/**
+ * GET /api/admin/institutions
+ * List all institutions, their published events, accepted terms version,
+ * and brand display eligibility / removal status.
+ */
+export const listInstitutions = asyncHandler(async (req, res) => {
+  const { q } = req.query;
+  const filter = {};
+  if (q && q.trim()) {
+    filter.$or = [
+      { name:  { $regex: q.trim(), $options: 'i' } },
+      { city:  { $regex: q.trim(), $options: 'i' } },
+      { state: { $regex: q.trim(), $options: 'i' } },
+    ];
+  }
+
+  const colleges = await College.find(filter).sort({ name: 1 }).lean();
+
+  // Enhance each college with real published event counts and latest terms version
+  const institutions = await Promise.all(
+    colleges.map(async (col) => {
+      const [publishedCount, latestEvent] = await Promise.all([
+        Event.countDocuments({ college: col.name, isActive: true, isApproved: true }),
+        Event.findOne({ college: col.name, isActive: true, isApproved: true })
+          .sort({ createdAt: -1 })
+          .select('termsVersion termsAcceptedAt')
+          .lean(),
+      ]);
+
+      const effectiveTermsVersion =
+        col.termsVersionAccepted ||
+        latestEvent?.termsVersion ||
+        (publishedCount > 0 ? 'legacy' : null);
+
+      const effectiveMarketingEligible =
+        col.marketingEligible ||
+        (publishedCount > 0 && effectiveTermsVersion === '2026-09');
+
+      return {
+        ...col,
+        publishedEventsCount: publishedCount,
+        hasPublishedEvent: publishedCount > 0,
+        termsVersionAccepted: effectiveTermsVersion,
+        marketingEligible: effectiveMarketingEligible,
+        isMarketingDisplayAllowed: col.isMarketingDisplayAllowed !== false,
+      };
+    })
+  );
+
+  return ok(res, { institutions, total: institutions.length });
+});
+
+/**
+ * PATCH /api/admin/institutions/:id/marketing-display
+ * Enable or disable marketing brand display for an institution.
+ * Used when legally required to disable display or honor takedown requests.
+ */
+export const toggleInstitutionMarketingDisplay = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { isMarketingDisplayAllowed, reason, marketingEligible, logoUrl, logoEmoji } = req.body;
+
+  const college = await College.findById(id);
+  if (!college) return notFoundRes(res, 'Institution not found');
+
+  if (typeof isMarketingDisplayAllowed === 'boolean') {
+    college.isMarketingDisplayAllowed = isMarketingDisplayAllowed;
+    if (!isMarketingDisplayAllowed && reason?.trim()) {
+      college.removalRequested = true;
+      college.removalRequestReason = reason.trim();
+      college.removalRequestedAt = new Date();
+    }
+  }
+
+  if (typeof marketingEligible === 'boolean') {
+    college.marketingEligible = marketingEligible;
+    if (marketingEligible && !college.termsVersionAccepted) {
+      college.termsVersionAccepted = '2026-09';
+    }
+  }
+
+  if (logoUrl !== undefined) college.logoUrl = logoUrl;
+  if (logoEmoji !== undefined) college.logoEmoji = logoEmoji;
+
+  await college.save();
+
+  return ok(res, { college }, 'Institution marketing display settings updated');
+});
+
+/**
+ * POST /api/admin/institutions/:id/removal-request
+ * Formally record an authorized institution representative's branding removal request.
+ */
+export const requestInstitutionBrandingRemoval = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason = 'Branding removal requested by institution representative', requesterName, requesterEmail } = req.body;
+
+  const college = await College.findById(id);
+  if (!college) return notFoundRes(res, 'Institution not found');
+
+  college.removalRequested = true;
+  college.removalRequestReason = `[By ${requesterName || 'Representative'}${requesterEmail ? ` <${requesterEmail}>` : ''}]: ${reason}`;
+  college.removalRequestedAt = new Date();
+  college.isMarketingDisplayAllowed = false; // Immediately ceases promotional display
+
+  await college.save();
+
+  return ok(
+    res,
+    { college },
+    'Institution branding removal request recorded. Promotional display has been disabled.'
+  );
 });
 

@@ -98,6 +98,12 @@ const eventSchema = new mongoose.Schema(
     isApproved: { type: Boolean, default: true },
     isFeatured:    { type: Boolean, default: false },
     featuredOrder: { type: Number,  default: 0 },
+
+    // Terms & Brand Permission Acceptance audit
+    termsVersion:                  { type: String, default: '2026-09' },
+    termsAcceptedAt:              { type: Date, default: Date.now },
+    termsAcceptedBy:              { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    institutionAuthorityConfirmed:{ type: Boolean, default: true },
   },
   {
     timestamps: true,

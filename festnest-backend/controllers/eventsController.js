@@ -755,6 +755,9 @@ export const hostEvent = asyncHandler(async (req, res) => {
     : { url: '', publicId: '' };
 
   // Sanitize all user-supplied text fields before persisting
+  const termsVersion = clean(req.body.termsVersion) || '2026-09';
+  const institutionAuthorityConfirmed = req.body.institutionAuthorityConfirmed === 'true' || req.body.institutionAuthorityConfirmed === true;
+
   const hosted = await HostedEvent.create({
     submittedBy:  req.user._id,
     eventName: clean(eventName), college: clean(college), eventType: clean(eventType),
@@ -767,6 +770,10 @@ export const hostEvent = asyncHandler(async (req, res) => {
     eligibility: clean(eligibility), rules: clean(rules), perks: clean(perks),
     pocName: clean(pocName), pocPhone, pocEmail, website,
     bannerImage, brochure,
+    termsVersion,
+    termsAcceptedAt: new Date(),
+    termsAcceptedBy: req.user._id,
+    institutionAuthorityConfirmed,
   });
 
   // Award host points

@@ -28,3 +28,51 @@ export const setMyCollege = asyncHandler(async (req, res) => {
   await User.findByIdAndUpdate(req.user._id, { college });
   return ok(res, { college }, 'College updated');
 });
+
+/**
+ * GET /api/college/hosting-institutions
+ * Public endpoint for the landing page trust section.
+ * Returns verified institutions that have hosted at least one published event on FestNest,
+ * have accepted the modern brand-use Terms (or are marked eligible), and whose marketing
+ * display is active (not revoked/disabled by takedown requests).
+ */
+export const getHostingInstitutions = asyncHandler(async (_req, res) => {
+  // Query colleges where marketing display is permitted and either explicitly eligible
+  // or with published events under Terms 2026-09
+  const colleges = await College.find({
+    isMarketingDisplayAllowed: { $ne: false },
+    $or: [
+      { marketingEligible: true },
+      { termsVersionAccepted: '2026-09' },
+      { hasPublishedEvent: true, termsVersionAccepted: { $ne: null } },
+    ],
+  }).lean();
+
+  const eligibleInstitutions = [];
+
+  for (const col of colleges) {
+    const eventCount = await Event.countDocuments({
+      college: col.name,
+      isActive: true,
+      isApproved: true,
+    });
+
+    // Only display institutions that have at least one live, approved event
+    if (eventCount > 0) {
+      eligibleInstitutions.push({
+        id: col._id,
+        name: col.name,
+        city: col.city,
+        state: col.state,
+        logoUrl: col.logoUrl || '',
+        logoEmoji: col.logoEmoji || '🏛️',
+        eventCount,
+      });
+    }
+  }
+
+  // Sort by eventCount descending, then alphabetical
+  eligibleInstitutions.sort((a, b) => b.eventCount - a.eventCount || a.name.localeCompare(b.name));
+
+  return ok(res, { institutions: eligibleInstitutions });
+});

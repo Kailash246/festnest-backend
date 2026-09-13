@@ -10,6 +10,7 @@ import {
   listTickets, updateTicket,
   addCollege, updateCollege, deleteCollege,
   broadcastNotification,
+  listInstitutions, toggleInstitutionMarketingDisplay, requestInstitutionBrandingRemoval,
   listAmbassadors, getAmbassador, approveAmbassador, rejectAmbassador,
   updateAmbassadorStatus, adjustAmbassadorStats, getAmbassadorImpact,
   listFeedback, getFeedback, deleteFeedback,
@@ -79,10 +80,13 @@ router.patch('/users/:id/role',       requireSuperAdmin, setUserRole);
 router.get('/tickets',       listTickets);
 router.patch('/tickets/:id', updateTicket);
 
-/* ── College Management ── */
-router.post('/colleges',         ...validateAddCollege, validate, addCollege);
-router.patch('/colleges/:id',    updateCollege);
-router.delete('/colleges/:id',   deleteCollege);
+/* ── College & Institution Brand Management ── */
+router.get('/institutions',                           listInstitutions);
+router.patch('/institutions/:id/marketing-display',   toggleInstitutionMarketingDisplay);
+router.post('/institutions/:id/removal-request',      requestInstitutionBrandingRemoval);
+router.post('/colleges',                              ...validateAddCollege, validate, addCollege);
+router.patch('/colleges/:id',                         updateCollege);
+router.delete('/colleges/:id',                        deleteCollege);
 
 /* ── Broadcast Notifications ── */
 router.post('/notify', ...validateBroadcast, validate, broadcastNotification);

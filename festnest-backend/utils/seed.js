@@ -104,6 +104,7 @@ const events = await Event.insertMany([
     stats: { registrationCount: 280, viewCount: 710 },
   },
 ]);
+].map(ev => ({ ...ev, termsVersion: '2026-09', termsAcceptedAt: new Date(), institutionAuthorityConfirmed: true })));
 console.log(`  ✅  Seeded ${events.length} events`);
 
 /* ── Colleges ── */
@@ -116,6 +117,14 @@ await College.insertMany([
   { name: 'NSIT Delhi',     city: 'New Delhi',       state: 'Delhi',       logoEmoji: '🏫', pastEvents: 12  },
   { name: 'IIT Delhi',      city: 'New Delhi',       state: 'Delhi',       logoEmoji: '🏛️', pastEvents: 95  },
   { name: 'IIT Madras',     city: 'Chennai',         state: 'Tamil Nadu',  logoEmoji: '🏛️', pastEvents: 87  },
+  { name: 'IIT Bombay',     city: 'Mumbai',          state: 'Maharashtra', logoEmoji: '🏛️', pastEvents: 120, hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'NIT Trichy',     city: 'Tiruchirappalli', state: 'Tamil Nadu',  logoEmoji: '🏛️', pastEvents: 24,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'IISc Bangalore', city: 'Bangalore',       state: 'Karnataka',   logoEmoji: '🔬', pastEvents: 15,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'BITS Pilani',    city: 'Pilani',          state: 'Rajasthan',   logoEmoji: '🎨', pastEvents: 38,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'VIT Vellore',    city: 'Vellore',         state: 'Tamil Nadu',  logoEmoji: '⚙️', pastEvents: 61,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'NSIT Delhi',     city: 'New Delhi',       state: 'Delhi',       logoEmoji: '🏫', pastEvents: 12,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'IIT Delhi',      city: 'New Delhi',       state: 'Delhi',       logoEmoji: '🏛️', pastEvents: 95,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
+  { name: 'IIT Madras',     city: 'Chennai',         state: 'Tamil Nadu',  logoEmoji: '🏛️', pastEvents: 87,  hasPublishedEvent: true, marketingEligible: true, isMarketingDisplayAllowed: true, termsVersionAccepted: '2026-09' },
 ]);
 console.log('  ✅  Seeded 8 colleges');
 
