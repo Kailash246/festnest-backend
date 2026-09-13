@@ -1,7 +1,7 @@
 // routes/refer.js
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { requireAuth, optionalAuth } from '../middleware/auth.js';
+import { requireAdmin } from '../middleware/adminAuth.js';
 import {
   getReferralSummary,
   getReferralHistory,
@@ -10,6 +10,9 @@ import {
 } from '../controllers/referController.js';
 
 const router = Router();
+
+// Strictly restrict entire Refer & Earn API to admin users
+router.use(requireAdmin);
 
 /* ── Rate limiter for spin requests (prevent rapid automated spin requests) ── */
 const spinLimiter = rateLimit({
@@ -24,11 +27,11 @@ const spinLimiter = rateLimit({
   },
 });
 
-/* ── User routes ── */
-router.get('/summary',      requireAuth, getReferralSummary);
-router.get('/history',      requireAuth, getReferralHistory);
-router.get('/wheel-config', optionalAuth, getWheelConfig);
-router.post('/spin',        requireAuth, spinLimiter, spinWheel);
+/* ── Admin-only Refer & Earn routes ── */
+router.get('/summary',      getReferralSummary);
+router.get('/history',      getReferralHistory);
+router.get('/wheel-config', getWheelConfig);
+router.post('/spin',        spinLimiter, spinWheel);
 
 export default router;
 

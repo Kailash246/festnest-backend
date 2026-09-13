@@ -103,7 +103,6 @@ const events = await Event.insertMany([
     trending: { rank: 4, views: '710 views', extra: '₹1L Prize' },
     stats: { registrationCount: 280, viewCount: 710 },
   },
-]);
 ].map(ev => ({ ...ev, termsVersion: '2026-09', termsAcceptedAt: new Date(), institutionAuthorityConfirmed: true })));
 console.log(`  ✅  Seeded ${events.length} events`);
 
