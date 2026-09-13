@@ -159,12 +159,22 @@ export const pageView = asyncHandler(async (req, res) => {
     ).catch(err => console.error('[Activity] Error updating session on page view:', err.message));
   }
 
+  // Attribute durationOnPage to the prior page_view record for that previous path
+  if (metadata?.previousPath && Number(durationOnPage) > 0) {
+    Activity.findOneAndUpdate(
+      { user: req.user._id, sessionId, type: 'page_view', 'page.path': metadata.previousPath },
+      { $inc: { durationOnPage: Number(durationOnPage) } },
+      { sort: { createdAt: -1 } }
+    ).catch(() => {});
+  }
+
   await User.findByIdAndUpdate(req.user._id, {
     lastActiveAt: now,
   }).catch(err => console.error('[Activity] Error updating user lastActiveAt on page view:', err.message));
 
   return ok(res, { activity }, 'Page view recorded');
 });
+
 
 /* ────────────────────────────────────────────────────────
    POST /api/activity/track
@@ -242,3 +252,4 @@ export const endSession = asyncHandler(async (req, res) => {
 
   return ok(res, { ended: true }, 'Session ended');
 });
+
