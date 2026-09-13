@@ -22,10 +22,22 @@ export function errorHandler(err, req, res, _next) {
 
   /* ── Mongoose / Mongo duplicate key (code 11000) → 409 ── */
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue || {})[0] || 'value';
-    const readable = field === 'email'
-      ? 'This email is already registered. Please log in instead.'
-      : `That ${field} is already taken. Please choose another.`;
+    const keys = Object.keys(err.keyValue || {});
+    let readable;
+    if (keys.includes('email')) {
+      readable = 'This email is already registered. Please log in instead.';
+    } else if (keys.includes('referralCode')) {
+      readable = 'That referral code is already taken. Please choose another.';
+    } else if (keys.includes('idempotencyKey')) {
+      readable = 'A request with this key has already been processed.';
+    } else if (keys.includes('user') && keys.includes('milestoneIndex')) {
+      readable = 'This spin milestone has already been consumed.';
+    } else if (keys.includes('user')) {
+      readable = 'A conflicting record already exists for this user.';
+    } else {
+      const field = keys[0] || 'value';
+      readable = `That ${field} is already taken. Please choose another.`;
+    }
     return res.status(409).json({ success: false, message: readable });
   }
 

@@ -169,7 +169,7 @@ export const getReferralSummary = asyncHandler(async (req, res) => {
       status: 'verified',
       eventStatus: 'registered',
     }),
-    Spin.countDocuments({ user: user._id }),
+    Spin.countDocuments({ user: user._id, isTest: { $ne: true }, 'metadata.isTest': { $ne: true } }),
   ]);
   const settings = await getReferSettings();
 
@@ -243,7 +243,11 @@ export const getReferralHistory = asyncHandler(async (req, res) => {
   }
 
   if (type === 'spins') {
-    const records = await Spin.find({ user: req.user._id })
+    const records = await Spin.find({
+      user: req.user._id,
+      isTest: { $ne: true },
+      'metadata.isTest': { $ne: true },
+    })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit + 1)
@@ -349,7 +353,7 @@ export const spinWheel = asyncHandler(async (req, res) => {
         status: 'verified',
         eventStatus: 'registered',
       }),
-      Spin.countDocuments({ user: user._id }),
+      Spin.countDocuments({ user: user._id, isTest: { $ne: true }, 'metadata.isTest': { $ne: true } }),
     ]);
 
   const calc = calculateMilestonesAndSpins({
@@ -765,7 +769,7 @@ export const getAdminUserReferProfile = asyncHandler(async (req, res) => {
     Referral.countDocuments({ referrer: user._id, status: 'verified' }),
     Referral.countDocuments({ referrer: user._id, status: 'invalid' }),
     Referral.countDocuments({ referrer: user._id, status: 'verified', eventStatus: 'registered' }),
-    Spin.countDocuments({ user: user._id }),
+    Spin.countDocuments({ user: user._id, isTest: { $ne: true }, 'metadata.isTest': { $ne: true } }),
     Referral.find({ referrer: user._id })
       .sort({ createdAt: -1 })
       .limit(20)
@@ -1079,11 +1083,11 @@ export const adminTestSpin = asyncHandler(async (req, res) => {
     }
   }
 
-  // Create isolated test spin
+  // Create isolated test spin with unique negative milestone index so it never collides
   const testSpin = await Spin.create({
     user: user._id,
     idempotencyKey: `test-spin-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    milestoneIndex: 0,
+    milestoneIndex: -Math.floor(Date.now() + Math.random() * 1000),
     fnCoinsDeducted: deductCoins ? 200 : 0,
     winningSegmentId: winningReward.segmentId,
     reward: {
@@ -1093,6 +1097,7 @@ export const adminTestSpin = asyncHandler(async (req, res) => {
     },
     status: winningReward.type === 'fn_coins' || winningReward.type === 'none' ? 'credited' : 'under_review',
     statusReason: 'Admin isolated test spin',
+    isTest: true,
     metadata: {
       isTest: true,
       testAdminId: req.user._id,

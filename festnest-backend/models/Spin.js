@@ -62,6 +62,15 @@ const spinSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    isTest: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -72,7 +81,13 @@ const spinSchema = new mongoose.Schema(
 );
 
 spinSchema.index({ user: 1, createdAt: -1 });
-spinSchema.index({ user: 1, milestoneIndex: 1 }, { unique: true });
+spinSchema.index(
+  { user: 1, milestoneIndex: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { milestoneIndex: { $gt: 0 } },
+  }
+);
 
 export const Spin = mongoose.model('Spin', spinSchema);
 export default Spin;
