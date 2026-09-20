@@ -56,3 +56,4 @@ activitySchema.index({ createdAt: -1 });
 activitySchema.index({ user: 1, type: 1 });
 
 export default mongoose.model('Activity', activitySchema);
+

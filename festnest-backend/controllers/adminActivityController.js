@@ -293,3 +293,4 @@ export const getUserActivityDetail = asyncHandler(async (req, res) => {
     timeline,
   }, 'User activity details fetched successfully');
 });
+

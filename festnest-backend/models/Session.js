@@ -75,3 +75,4 @@ sessionSchema.index({ user: 1, lastHeartbeat: -1 });
 sessionSchema.index({ createdAt: -1 });
 
 export default mongoose.model('Session', sessionSchema);
+
