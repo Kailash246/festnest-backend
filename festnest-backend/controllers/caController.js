@@ -7,6 +7,9 @@ import Event from '../models/Event.js';
 import { ok, created, fail, notFoundRes, asyncHandler } from '../utils/response.js';
 import { uploadAmbassadorPhoto } from '../config/cloudinary.js';
 import { sendAmbassadorApprovedEmail } from '../utils/email.js';
+import { calculateCAPerformance, getLeaderboard as getLeaderboardService } from '../services/caPerformanceService.js';
+import { CA_PROGRAM_CONFIG } from '../config/caProgramConfig.js';
+import CARewardSnapshot from '../models/CARewardSnapshot.js';
 
 /* ── Standard Launch City Mapping ── */
 const CITY_CODES = {
@@ -87,6 +90,7 @@ export async function computeImpactStats(ca) {
   const referredUsers = await User.find({ referredByCA: ca._id }, '_id role').lean();
   const referredUserIds = referredUsers.map(u => u._id);
 
+  // 2. Organizers Onboarded: strictly users who signed up via CA referral with role 'organizer'
   const organizerUserIds = new Set(
     referredUsers.filter(u => u.role === 'organizer').map(u => String(u._id))
   );
@@ -100,18 +104,16 @@ export async function computeImpactStats(ca) {
     ).lean();
 
     hostedSubmissions.forEach(sub => {
-      organizerUserIds.add(String(sub.submittedBy));
       if (sub.status === 'approved' || sub.linkedEvent) {
         approvedEventsCount++;
       }
     });
 
-    // Also check live events where organizer is a referred user
+    // Also check live events where host is a referred user
     const liveEventsCount = await Event.countDocuments({
-      organizerId: { $in: referredUserIds },
+      hostedBy: { $in: referredUserIds },
       isDeleted: { $ne: true },
     });
-    // Use the max of approved submissions or live events to avoid double counting
     approvedEventsCount = Math.max(approvedEventsCount, liveEventsCount);
   }
 
@@ -500,6 +502,8 @@ export const getMyProfile = asyncHandler(async (req, res) => {
   const clientUrl = (rawClientUrl.includes('vercel.app') || rawClientUrl.includes('onrender.com')) ? 'https://festnest.in' : rawClientUrl;
   const referralUrl = ca.referralCode ? `${clientUrl}?ref=${ca.referralCode}` : '';
 
+  const performance = await calculateCAPerformance(ca);
+
   return ok(res, {
     profile: {
       _id: ca._id,
@@ -515,6 +519,10 @@ export const getMyProfile = asyncHandler(async (req, res) => {
       status: ca.status,
       createdAt: ca.createdAt,
       tier: ca.tier,
+      totalPoints: performance?.points || ca.totalPoints || 0,
+      certificateEligible: performance?.certificateEligible ?? ca.certificateEligible ?? false,
+      rewardEligible: performance?.rewardEligible ?? ca.rewardEligible ?? false,
+      performanceStatus: performance?.performanceStatus || ca.performanceStatus || 'Getting Started',
       photoUrl: ca.photoUrl,
       validThru: ca.validThru,
       appliedAt: ca.appliedAt,
@@ -522,6 +530,9 @@ export const getMyProfile = asyncHandler(async (req, res) => {
       stats: ca.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 },
       rejectionReason: ca.status === 'rejected' ? ca.rejectionReason : undefined,
     },
+    performance,
+    baseBenefits: CA_PROGRAM_CONFIG.baseBenefits,
+    rewardsConfig: CA_PROGRAM_CONFIG.rewards,
   });
 });
 
@@ -641,4 +652,75 @@ export const getCAImpact = asyncHandler(async (req, res) => {
     pages: Math.ceil(total / limitNum) || 1,
   });
 });
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/me/performance (Auth-protected)
+   Returns detailed milestone, points breakdown & checklist
+──────────────────────────────────────────────────────── */
+export const getMyPerformance = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const userEmail = req.user.email?.toLowerCase();
+
+  let ca = await CampusAmbassador.findOne({ userId }).sort({ createdAt: -1 });
+  if (!ca && userEmail) {
+    ca = await CampusAmbassador.findOne({ email: userEmail }).sort({ createdAt: -1 });
+  }
+
+  if (!ca) {
+    return notFoundRes(res, 'No campus ambassador record found for your account');
+  }
+
+  const performance = await calculateCAPerformance(ca);
+  return ok(res, { performance });
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/me/rewards (Auth-protected)
+   Returns reward eligibility, payout history & budget
+──────────────────────────────────────────────────────── */
+export const getMyRewards = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const userEmail = req.user.email?.toLowerCase();
+
+  let ca = await CampusAmbassador.findOne({ userId }).sort({ createdAt: -1 });
+  if (!ca && userEmail) {
+    ca = await CampusAmbassador.findOne({ email: userEmail }).sort({ createdAt: -1 });
+  }
+
+  if (!ca) {
+    return notFoundRes(res, 'No campus ambassador record found for your account');
+  }
+
+  const performance = await calculateCAPerformance(ca);
+  const snapshots = await CARewardSnapshot.find({ caId: ca._id })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  return ok(res, {
+    eligibility: {
+      rewardEligible: performance?.rewardEligible || false,
+      checklist: performance?.eligibilityChecklist || {},
+    },
+    snapshots,
+    programRewards: CA_PROGRAM_CONFIG.rewards,
+  });
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/leaderboard (Public)
+   Returns deterministic, public-safe leaderboard
+──────────────────────────────────────────────────────── */
+export const getLeaderboard = asyncHandler(async (req, res) => {
+  const data = await getLeaderboardService(req.query);
+  return ok(res, data);
+});
+
+/* ────────────────────────────────────────────────────────
+   GET /api/ca/program-config (Public)
+   Returns static program configuration, points rules & milestones
+──────────────────────────────────────────────────────── */
+export const getProgramConfig = asyncHandler(async (_req, res) => {
+  return ok(res, { config: CA_PROGRAM_CONFIG });
+});
+
 

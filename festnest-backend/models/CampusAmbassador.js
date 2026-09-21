@@ -25,15 +25,6 @@ const campusAmbassadorSchema = new mongoose.Schema(
     year:   { type: String, default: '', trim: true },
     instagram: { type: String, default: '', trim: true },
     why:    { type: String, required: true, trim: true },
-    referredByCode: { type: String, default: '', trim: true },
-    name:       { type: String, required: true, trim: true },
-    email:      { type: String, required: true, lowercase: true, trim: true, index: true },
-    phone:      { type: String, required: true, trim: true, index: true },
-    college:    { type: String, required: true, trim: true },
-    city:       { type: String, required: true, trim: true, index: true },
-    course:     { type: String, required: true, trim: true },
-    why:        { type: String, required: true, trim: true },
-    instagram:  { type: String, default: '', trim: true },
 
     // City code used for deterministic sequential ID generation (e.g. 'BLR', 'PUN', 'DEL')
     cityCode: { type: String, default: '', trim: true },
@@ -41,17 +32,6 @@ const campusAmbassadorSchema = new mongoose.Schema(
     referredByCode:   { type: String, default: '', trim: true }, // backwards-compatible alias
 
     // Generated server-side upon admin approval
-    caId: { type: String, unique: true, sparse: true, index: true }, // e.g. "FN-CA-BLR-014"
-    referralCode: { type: String, unique: true, sparse: true, index: true }, // e.g. "FN-BLR-014"
-
-    status: {
-      type: String,
-      enum: ['applied', 'screening', 'approved', 'rejected'],
-      enum: ['applied', 'approved', 'rejected'],
-      default: 'applied',
-      index: true,
-    },
-
     caId: {
       type: String,
       unique: true,
@@ -60,7 +40,6 @@ const campusAmbassadorSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
     },
-
     referralCode: {
       type: String,
       unique: true,
@@ -70,19 +49,57 @@ const campusAmbassadorSchema = new mongoose.Schema(
       trim: true,
     },
 
+    status: {
+      type: String,
+      enum: ['applied', 'screening', 'approved', 'rejected'],
+      default: 'applied',
+      index: true,
+    },
+
+    // Legacy tier field kept for backwards compatibility
     tier: {
       type: String,
       enum: ['Bronze', 'Silver', 'Gold', 'City Lead'],
       default: 'Bronze',
     },
 
-    validThru: { type: String, default: '' }, // e.g. "09 / 2028"
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null,
+    // Milestone & Performance Progression (single source of truth in caPerformanceService)
+    totalPoints: {
+      type: Number,
+      default: 0,
       index: true,
     },
+    certificateEligible: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    certificateUnlockedAt: {
+      type: Date,
+      default: null,
+    },
+    rewardEligible: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    rewardEligibleAt: {
+      type: Date,
+      default: null,
+    },
+    performanceStatus: {
+      type: String,
+      enum: [
+        'Getting Started',
+        'Certificate Milestone Achieved',
+        'Reward Eligible',
+        'Top Performer',
+      ],
+      default: 'Getting Started',
+      index: true,
+    },
+
+    validThru: { type: String, default: '' }, // e.g. "09 / 2028"
 
     stats: {
       organizersOnboarded: { type: Number, default: 0 },
@@ -102,13 +119,18 @@ const campusAmbassadorSchema = new mongoose.Schema(
       organizersOnboarded: { type: Number, default: 0 },
       eventsSourced: { type: Number, default: 0 },
       referralSignups: { type: Number, default: 0 },
+      points: { type: Number, default: 0 },
     },
-    cityCode:   { type: String, default: '', trim: true },
-    validThru:  { type: String, default: '' },
 
     auditLog: [auditLogEntrySchema],
+
     // Guards against double-counting organizers for stats.organizersOnboarded
     referredOrganizerIds: [
+      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    ],
+
+    // Tracks organizers whose first approved event has already been credited (+5 pts bonus)
+    firstEventApprovedOrganizers: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     ],
   },
@@ -117,7 +139,7 @@ const campusAmbassadorSchema = new mongoose.Schema(
 
 campusAmbassadorSchema.index({ email: 1, status: 1 });
 campusAmbassadorSchema.index({ phone: 1, status: 1 });
+campusAmbassadorSchema.index({ totalPoints: -1, createdAt: 1 });
 
 export const CampusAmbassador = mongoose.model('CampusAmbassador', campusAmbassadorSchema);
 export default CampusAmbassador;
-

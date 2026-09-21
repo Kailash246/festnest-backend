@@ -4,6 +4,10 @@ import User       from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
          SupportTicket, PointsLog, College, Feedback, CAReferralLog, Activity } from '../models/index.js';
+         SupportTicket, College, Feedback, CAReferralLog, Activity } from '../models/index.js';
+import CAPointLedger from '../models/CAPointLedger.js';
+import CARewardSnapshot from '../models/CARewardSnapshot.js';
+import { recordEventApproved, reconcileCAPoints, createRewardSnapshot } from '../services/caPerformanceService.js';
 
 import { getCityCode, calculateTier, computeImpactStats } from './caController.js';
 import { sendMail, sendAmbassadorApprovedEmail } from '../utils/email.js';
@@ -204,6 +208,26 @@ export const approveSubmission = asyncHandler(async (req, res) => {
   submission.status      = 'approved';
   submission.linkedEvent = event._id;
   await submission.save();
+
+  // Campus Ambassador Referral Attribution Hook on Event Approval
+  try {
+    const submitterId = submission.submittedBy?._id || submission.submittedBy;
+    if (submitterId) {
+      const submitterUser = await User.findById(submitterId).select('_id role referredByCA').lean();
+      // Exclude admin or self accounts from receiving CA credit
+      if (
+        submitterUser &&
+        submitterUser.referredByCA &&
+        submitterUser.role !== 'admin' &&
+        submitterUser.role !== 'superadmin'
+      ) {
+        await recordEventApproved(submitterUser.referredByCA, event, submission);
+      }
+    }
+  } catch (caErr) {
+    console.error('[CA Referral Attribution Error on Event Approval]', caErr.message);
+    // Must never fail the event approval response
+  }
 
   // Automatic eligibility for College marketing brand display under Terms 2026-09
   const collegeName = (submission.college || '').trim();
@@ -967,6 +991,106 @@ export const getAmbassadorImpact = asyncHandler(async (req, res) => {
     pages: Math.ceil(total / limitNum) || 1,
   });
 });
+
+/**
+ * POST /api/admin/ca/:id/adjust-points
+ * Auditable point adjustment via CAPointLedger with mandatory reason
+ */
+export const adjustAmbassadorPoints = asyncHandler(async (req, res) => {
+  const { points, reason } = req.body;
+  if (typeof points !== 'number' || isNaN(points) || points === 0) {
+    return fail(res, 'Points must be a non-zero number');
+  }
+  if (!reason || !reason.trim()) {
+    return fail(res, 'A mandatory audit reason is required for point adjustments');
+  }
+
+  const ca = await CampusAmbassador.findById(req.params.id);
+  if (!ca) return notFoundRes(res, 'Ambassador not found');
+
+  const actionType = points > 0 ? 'POINT_ADJUSTMENT' : 'POINT_REVERSAL';
+  const idempotencyKey = `ADJUSTMENT:${ca._id}:${Date.now()}:${Math.random().toString(36).substring(2, 8)}`;
+
+  const ledgerEntry = await CAPointLedger.create({
+    caId: ca._id,
+    type: actionType,
+    points,
+    idempotencyKey,
+    refId: req.user._id,
+    refModel: 'User',
+    description: reason.trim(),
+    metadata: {
+      adjustedBy: req.user._id,
+      adminName: req.user.name || 'Admin',
+      reason: reason.trim(),
+    },
+  });
+
+  ca.auditLog.push({
+    action: 'stat_adjustment',
+    by: req.user._id,
+    byName: req.user.name || 'Admin',
+    date: new Date(),
+    notes: `Points adjusted by ${points > 0 ? `+${points}` : points}: ${reason.trim()}`,
+    meta: { pointsDelta: points, ledgerId: ledgerEntry._id },
+  });
+
+  await ca.save();
+  const result = await reconcileCAPoints(ca._id);
+
+  return ok(res, {
+    ledgerEntry,
+    ambassador: result?.ca || ca,
+    performance: result?.performance,
+  }, `Successfully adjusted ${points > 0 ? `+${points}` : points} points`);
+});
+
+/**
+ * POST /api/admin/ca/rewards/snapshot
+ * Generate frozen reward cycle snapshot
+ */
+export const generateRewardSnapshot = asyncHandler(async (req, res) => {
+  const { periodType = 'monthly', periodKey } = req.body;
+  if (!periodKey || !periodKey.trim()) {
+    return fail(res, 'periodKey is required (e.g. "2026-03" or "final-2026")');
+  }
+
+  try {
+    const snapshots = await createRewardSnapshot({
+      periodType,
+      periodKey: periodKey.trim(),
+      createdBy: req.user._id,
+    });
+    return created(res, { snapshots, count: snapshots.length }, `Generated ${snapshots.length} reward records for ${periodKey}`);
+  } catch (err) {
+    return fail(res, err.message, 400);
+  }
+});
+
+/**
+ * PATCH /api/admin/ca/rewards/:id/payout
+ * Update reward snapshot payout status & payment reference
+ */
+export const updateRewardPayout = asyncHandler(async (req, res) => {
+  const { status, paymentReference = '', notes = '' } = req.body;
+  if (!['PENDING_APPROVAL', 'APPROVED', 'PAID', 'REJECTED'].includes(status)) {
+    return fail(res, 'Invalid payout status. Allowed: PENDING_APPROVAL, APPROVED, PAID, REJECTED');
+  }
+
+  const snapshot = await CARewardSnapshot.findById(req.params.id);
+  if (!snapshot) return notFoundRes(res, 'Reward snapshot not found');
+
+  snapshot.status = status;
+  if (status === 'PAID') {
+    snapshot.paidAt = new Date();
+  }
+  if (paymentReference) snapshot.paymentReference = paymentReference.trim();
+  if (notes) snapshot.notes = notes.trim();
+
+  await snapshot.save();
+  return ok(res, { snapshot }, `Payout status updated to ${status}`);
+});
+
 
 /* ═══════════════════════════════════════════════════════════
    USER FEEDBACK MANAGEMENT

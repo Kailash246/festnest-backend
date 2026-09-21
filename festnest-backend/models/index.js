@@ -195,6 +195,8 @@ export const Feedback = mongoose.model('Feedback', feedbackSchema);
 
 export { CampusAmbassador } from './CampusAmbassador.js';
 export { CAReferralLog } from './CAReferralLog.js';
+export { CAPointLedger } from './CAPointLedger.js';
+export { CARewardSnapshot } from './CARewardSnapshot.js';
 export { Referral } from './Referral.js';
 export { FnCoinLedger } from './FnCoinLedger.js';
 export { Spin } from './Spin.js';

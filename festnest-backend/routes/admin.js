@@ -13,6 +13,7 @@ import {
   listInstitutions, toggleInstitutionMarketingDisplay, requestInstitutionBrandingRemoval,
   listAmbassadors, getAmbassador, approveAmbassador, rejectAmbassador,
   updateAmbassadorStatus, adjustAmbassadorStats, getAmbassadorImpact,
+  adjustAmbassadorPoints, generateRewardSnapshot, updateRewardPayout,
   listFeedback, getFeedback, deleteFeedback,
 } from '../controllers/adminController.js';
 import {
@@ -104,6 +105,16 @@ router.patch('/ca/:id/approve', approveAmbassador);
 router.patch('/ca/:id/reject',  rejectAmbassador);
 router.patch('/ca/:id/status',  updateAmbassadorStatus);
 router.patch('/ca/:id/adjust',  adjustAmbassadorStats);
+router.get('/ca',                      listAmbassadors);
+router.post('/ca/rewards/snapshot',    generateRewardSnapshot);
+router.patch('/ca/rewards/:id/payout', updateRewardPayout);
+router.get('/ca/:id',                  getAmbassador);
+router.get('/ca/:id/impact',           getAmbassadorImpact);
+router.patch('/ca/:id/approve',        approveAmbassador);
+router.patch('/ca/:id/reject',         rejectAmbassador);
+router.patch('/ca/:id/status',         updateAmbassadorStatus);
+router.patch('/ca/:id/adjust',         adjustAmbassadorStats);
+router.post('/ca/:id/adjust-points',   adjustAmbassadorPoints);
 
 /* ── User Feedback ── */
 router.get('/feedback',         listFeedback);

@@ -5,6 +5,7 @@ import Event        from '../models/Event.js';
 import Competition  from '../models/Competition.js';
 import { SavedEvent, Registration, Notification, PointsLog, HostedEvent, CampusAmbassador, CAReferralLog, Referral, Activity } from '../models/index.js';
 import { calculateTier } from './caController.js';
+import { recordOrganizerOnboarded } from '../services/caPerformanceService.js';
 
 import User         from '../models/User.js';
 import { cloudinary, uploadEventBanner, uploadBrochure } from '../config/cloudinary.js';
@@ -831,33 +832,15 @@ export const hostEvent = asyncHandler(async (req, res) => {
   const referredByCode = (req.body.referredByCode || '').trim().toUpperCase();
   if (referredByCode) {
     try {
-      const ca = await CampusAmbassador.findOne({ referralCode: referredByCode });
-      if (ca && ca.status === 'approved') {
-        const organizerIdStr = String(req.user._id);
-        const alreadyCounted = (ca.referredOrganizerIds || []).some(id => String(id) === organizerIdStr);
-        if (!alreadyCounted) {
-          ca.referredOrganizerIds = ca.referredOrganizerIds || [];
-          ca.referredOrganizerIds.push(req.user._id);
-          ca.stats = ca.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 };
-          ca.stats.organizersOnboarded = (ca.stats.organizersOnboarded || 0) + 1;
-          ca.tier = calculateTier(ca.stats.organizersOnboarded);
-          await ca.save();
-
-          const orgName = req.user.name || 'Organizer';
-          const orgCollege = req.user.college || clean(college) || '';
-          const label = orgCollege ? `${orgName} (${orgCollege})` : orgName;
-
-          await CAReferralLog.create({
-            caId: ca._id,
-            type: 'organizer',
-            refId: req.user._id,
-            refModel: 'User',
-            label,
-          });
-        }
+      const targetCA = await CampusAmbassador.findOne({ referralCode: referredByCode, status: 'approved' });
+      if (targetCA && !req.user.referredByCA) {
+        await User.findByIdAndUpdate(req.user._id, {
+          referredByCA: targetCA._id,
+          caReferralCodeUsed: targetCA.referralCode,
+        });
       }
     } catch (caErr) {
-      console.error('[CA Referral Attribution Error]', caErr.message);
+      console.error('[CA Referral Attribution Error on Event Submission]', caErr.message);
       // must never affect event creation response
     }
   }

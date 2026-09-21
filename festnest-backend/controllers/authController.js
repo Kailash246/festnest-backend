@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import User          from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import CAReferralLog from '../models/CAReferralLog.js';
+import { recordUserSignup, recordOrganizerOnboarded } from '../services/caPerformanceService.js';
 import { Referral, FnCoinLedger, Notification, Activity } from '../models/index.js';
 import OTP           from '../models/OTP.js';
 
@@ -171,17 +172,19 @@ export const register = asyncHandler(async (req, res) => {
 
   if (matchingCA) {
     try {
-      matchingCA.stats = matchingCA.stats || { organizersOnboarded: 0, eventsSourced: 0, referralSignups: 0 };
-      matchingCA.stats.referralSignups = (matchingCA.stats.referralSignups || 0) + 1;
-      await matchingCA.save();
+      // Anti-fraud: prevent self-referral
+      const isSelf = (matchingCA.userId && matchingCA.userId.equals(user._id)) ||
+        (matchingCA.email && matchingCA.email.toLowerCase() === lower);
 
-      await CAReferralLog.create({
-        caId: matchingCA._id,
-        type: 'student',
-        refId: user._id,
-        refModel: 'User',
-        label: `${user.name}${user.college ? ` (${user.college})` : ''}`,
-      });
+      if (!isSelf) {
+        if (role === 'organizer' && organization && designation) {
+          // Verified organizer onboarding flow (+5 points)
+          await recordOrganizerOnboarded(matchingCA._id, user);
+        } else {
+          // Verified student/user signup (+1 point)
+          await recordUserSignup(matchingCA._id, user);
+        }
+      }
     } catch (caErr) {
       console.error('[CA Referral Attribution Error on Signup]', caErr.message);
       // must never affect user registration response
