@@ -2,7 +2,6 @@
 import { Router } from 'express';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
-import { apply, getMyProfile, getPublicCard, getMyImpact, getCAImpact } from '../controllers/caController.js';
 import {
   apply,
   getMyProfile,
