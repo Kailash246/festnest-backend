@@ -70,7 +70,10 @@ const hostedEventSchema = new mongoose.Schema(
     eventName:       { type: String, required: true },
     college:         { type: String, required: true },
     eventType:       { type: String, required: true },
-    startDate:       { type: String, required: true },
+    startDate:            { type: String, default: '' },
+    endDate:              { type: String, default: '' },
+    eventDate:            { type: String, default: '' },
+    registrationDeadline: { type: String, default: '' },
     city:            { type: String, required: true },
     venue:           { type: String, default: '' },
     teamSize:        { type: String, default: '' },
@@ -95,7 +98,6 @@ const hostedEventSchema = new mongoose.Schema(
     rules:       { type: String, default: '' },
     perks:       { type: String, default: '' },
     mode:        { type: String, default: 'Offline' },
-    endDate:     { type: String, default: '' },
     bannerImage: {
       url:      { type: String, default: '' },
       publicId: { type: String, default: '' },
@@ -113,6 +115,26 @@ const hostedEventSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+hostedEventSchema.pre('save', function (next) {
+  if (!this.eventDate && this.startDate) {
+    this.eventDate = this.startDate;
+  }
+  if (!this.startDate && this.eventDate) {
+    this.startDate = this.eventDate;
+  }
+  if (!this.registrationDeadline && this.endDate) {
+    this.registrationDeadline = this.endDate;
+  }
+  if (!this.registrationDeadline && this.eventDate) {
+    this.registrationDeadline = this.eventDate;
+  }
+  if (!this.endDate && this.registrationDeadline) {
+    this.endDate = this.registrationDeadline;
+  }
+  next();
+});
+
 export const HostedEvent = mongoose.model('HostedEvent', hostedEventSchema);
 
 // ─────────────────────────────────────────────────

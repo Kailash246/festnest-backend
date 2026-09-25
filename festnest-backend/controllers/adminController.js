@@ -4,7 +4,6 @@ import User       from '../models/User.js';
 import CampusAmbassador from '../models/CampusAmbassador.js';
 import { HostedEvent, Notification, Registration, SavedEvent,
          SupportTicket, PointsLog, College, Feedback, CAReferralLog, Activity } from '../models/index.js';
-         SupportTicket, College, Feedback, CAReferralLog, Activity } from '../models/index.js';
 import CAPointLedger from '../models/CAPointLedger.js';
 import CARewardSnapshot from '../models/CARewardSnapshot.js';
 import { recordEventApproved, reconcileCAPoints, createRewardSnapshot } from '../services/caPerformanceService.js';
@@ -132,10 +131,13 @@ export const approveSubmission = asyncHandler(async (req, res) => {
     : submission.hasPrize ? 'prize'
     : 'free';
 
-  // Compute days until event start so deadlineDays is accurate at publish time
-  const _startDate = new Date(submission.startDate);
-  const _deadlineDays = !isNaN(_startDate)
-    ? Math.max(0, Math.ceil((_startDate - Date.now()) / 86400000))
+  const eventDateVal = submission.eventDate || submission.startDate || '';
+  const regDeadlineVal = submission.registrationDeadline || submission.endDate || eventDateVal || '';
+
+  // Compute days until registration closes so deadlineDays is accurate at publish time
+  const _deadlineDate = new Date(regDeadlineVal);
+  const _deadlineDays = !isNaN(_deadlineDate.getTime())
+    ? Math.max(0, Math.ceil((_deadlineDate.getTime() - Date.now()) / 86400000))
     : 0;
 
   const event = await Event.create({
@@ -150,11 +152,15 @@ export const approveSubmission = asyncHandler(async (req, res) => {
     },
     college:   submission.college,
     city:      submission.city,
+    eventDate:            eventDateVal,
+    registrationDeadline: regDeadlineVal,
     date: {
-      start:        submission.startDate,
-      end:          submission.endDate   || '',
-      time:         overrides.time       || '',
-      deadlineDays: _deadlineDays,
+      eventDate:            eventDateVal,
+      registrationDeadline: regDeadlineVal,
+      start:                eventDateVal,
+      end:                  regDeadlineVal,
+      time:                 overrides.time       || '',
+      deadlineDays:         _deadlineDays,
     },
     venue:    submission.venue,
     teamSize: submission.teamSize,
@@ -358,14 +364,40 @@ export const listAllEvents = asyncHandler(async (req, res) => {
 
 /** POST /api/admin/events  — create event directly (no submission flow) */
 export const createEvent = asyncHandler(async (req, res) => {
-  const { name, category, entryType, college, city, startDate } = req.body;
-  if (!name || !category || !entryType || !college || !city || !startDate)
-    return fail(res, 'name, category, entryType, college, city and startDate are required');
+  const { name, category, entryType, college, city } = req.body;
+  const eventDate = req.body.eventDate || req.body.startDate;
+  const registrationDeadline = req.body.registrationDeadline || req.body.endDate || eventDate;
+
+  if (!name || !category || !entryType || !college || !city || !eventDate || !registrationDeadline)
+    return fail(res, 'name, category, entryType, college, city, eventDate and registrationDeadline are required');
+
+  if (registrationDeadline && eventDate) {
+    const dDeadline = new Date(registrationDeadline);
+    const dEvent = new Date(eventDate);
+    if (!isNaN(dDeadline.getTime()) && !isNaN(dEvent.getTime()) && dDeadline > dEvent) {
+      return fail(res, 'Registration deadline cannot be after the event date.', 400);
+    }
+  }
 
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     + '-' + Date.now().toString(36);
 
-  const event = await Event.create({ ...req.body, slug });
+  const _deadlineDays = Math.max(0, Math.ceil((new Date(registrationDeadline).getTime() - Date.now()) / 86400000)) || 0;
+
+  const event = await Event.create({
+    ...req.body,
+    eventDate,
+    registrationDeadline,
+    date: {
+      eventDate,
+      registrationDeadline,
+      start: eventDate,
+      end: registrationDeadline,
+      time: req.body.date?.time || req.body.time || '',
+      deadlineDays: _deadlineDays,
+    },
+    slug,
+  });
 
   const sessionId = req.headers['x-session-id'] || null;
   Activity.create({

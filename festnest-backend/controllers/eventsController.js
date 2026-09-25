@@ -167,9 +167,16 @@ export function parseEventEndDate(endDate, startDate) {
 
 export function isEventExpired(ev, now = new Date()) {
   if (!ev) return false;
-  const endDate = ev.endDate || ev.date?.end || '';
-  const startDate = ev.startDate || ev.date?.start || (typeof ev.date === 'string' ? ev.date : '');
-  const end = parseEventEndDate(endDate, startDate);
+  const eventDate = ev.eventDate || ev.date?.eventDate || ev.date?.start || ev.startDate || (typeof ev.date === 'string' ? ev.date : '');
+  const end = parseEventEndDate(eventDate, '');
+  if (!end) return false;
+  return end.getTime() < now.getTime();
+}
+
+export function isRegistrationClosed(ev, now = new Date()) {
+  if (!ev) return false;
+  const deadline = ev.registrationDeadline || ev.date?.registrationDeadline || ev.date?.end || ev.endDate || ev.eventDate || ev.date?.eventDate || ev.date?.start || ev.startDate || '';
+  const end = parseEventEndDate(deadline, '');
   if (!end) return false;
   return end.getTime() < now.getTime();
 }
@@ -183,14 +190,14 @@ export function getSortComparator(sortType) {
   switch (sortType) {
     case 'latest':
       return (a, b) => {
-        const tA = new Date(a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
-        const tB = new Date(b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
+        const tA = new Date(a.eventDate || a.date?.eventDate || a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
+        const tB = new Date(b.eventDate || b.date?.eventDate || b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
         return tB - tA;
       };
     case 'oldest':
       return (a, b) => {
-        const tA = new Date(a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
-        const tB = new Date(b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
+        const tA = new Date(a.eventDate || a.date?.eventDate || a.date?.start || a.startDate || a.createdAt || 0).getTime() || 0;
+        const tB = new Date(b.eventDate || b.date?.eventDate || b.date?.start || b.startDate || b.createdAt || 0).getTime() || 0;
         return tA - tB;
       };
     case 'mostregistered':
@@ -246,14 +253,14 @@ export function sortEventsByStatus(events, comparator, now = new Date()) {
   return [...featuredActive, ...nonFeaturedActive, ...featuredExpired, ...nonFeaturedExpired];
 }
 
-// Recompute deadlineDays dynamically from date.start when it's parseable
+// Recompute deadlineDays dynamically from registrationDeadline when it's parseable
 function withDeadlineDays(ev, now = new Date()) {
   if (!ev) return ev;
-  const startRaw = ev?.date?.start || ev?.startDate;
-  if (!startRaw) return ev;
-  const startDt = parseEventStartDate(startRaw);
-  if (!startDt) return ev;
-  const days = Math.max(0, Math.ceil((startDt.getTime() - now.getTime()) / 86400000));
+  const deadlineRaw = ev?.registrationDeadline || ev?.date?.registrationDeadline || ev?.date?.end || ev?.endDate || ev?.eventDate || ev?.date?.eventDate || ev?.date?.start || ev?.startDate;
+  if (!deadlineRaw) return ev;
+  const deadlineDt = parseEventStartDate(deadlineRaw);
+  if (!deadlineDt) return ev;
+  const days = Math.max(0, Math.ceil((deadlineDt.getTime() - now.getTime()) / 86400000));
   if (ev.date && typeof ev.date === 'object') {
     return { ...ev, date: { ...ev.date, deadlineDays: days } };
   }
@@ -276,10 +283,9 @@ function dateKeyToUtc(key) {
   return Date.UTC(year, month - 1, day);
 }
 
-function getEndingSoonDetails(endDate, startDate, now = new Date()) {
-  // End date is optional in the host form. An omitted end date represents a
-  // one-day event, so its start date is also its effective end date.
-  const raw = String(endDate || startDate || '').trim();
+function getEndingSoonDetails(registrationDeadline, eventDate, now = new Date()) {
+  // Use registrationDeadline for registration closing urgency
+  const raw = String(registrationDeadline || eventDate || '').trim();
   if (!raw) return null;
   const dateOnly = raw.match(/^(\d{4}-\d{2}-\d{2})$/);
   const todayKey = indiaDateKey(now);
@@ -417,7 +423,14 @@ export const urgentEvents = asyncHandler(async (_req, res) => {
   const now = new Date();
   const events = await Event.find({ isActive: true, isApproved: true }).lean();
   const endingSoon = events
-    .map(event => ({ event, details: getEndingSoonDetails(event.date?.end, event.date?.start, now) }))
+    .map(event => ({
+      event,
+      details: getEndingSoonDetails(
+        event.registrationDeadline || event.date?.registrationDeadline || event.date?.end || event.endDate,
+        event.eventDate || event.date?.eventDate || event.date?.start || event.startDate,
+        now
+      )
+    }))
     .filter(({ details }) => details)
     .sort((a, b) => a.details.endAt - b.details.endAt)
     .map(({ event, details }) => ({
@@ -514,12 +527,23 @@ export const updateOwnedEvent = asyncHandler(async (req, res) => {
 
   const event = result.event;
   const {
-    eventName, college, eventType, startDate, endDate = '', city, venue = '',
+    eventName, college, eventType, city, venue = '',
     teamSize = '', mode = 'Offline', hasPrize = false, prize1 = '', prize2 = '',
     prize3 = '', totalPrize = '', isPaid = false, entryFee = '', about = '',
     registrationUrl = '', eligibility = '', rules = '', perks = '', pocName = '',
     pocPhone = '', pocEmail = '', website = '',
   } = req.body;
+
+  const eventDate = req.body.eventDate || req.body.startDate || event.eventDate || event.date?.start || '';
+  const registrationDeadline = req.body.registrationDeadline || req.body.endDate || event.registrationDeadline || event.date?.end || eventDate;
+
+  if (registrationDeadline && eventDate) {
+    const dDeadline = new Date(registrationDeadline);
+    const dEvent = new Date(eventDate);
+    if (!isNaN(dDeadline.getTime()) && !isNaN(dEvent.getTime()) && dDeadline > dEvent) {
+      return fail(res, 'Registration deadline cannot be after the event date.', 400);
+    }
+  }
 
   const paid = isPaid === 'true' || isPaid === true;
   const prize = hasPrize === 'true' || hasPrize === true;
@@ -532,7 +556,15 @@ export const updateOwnedEvent = asyncHandler(async (req, res) => {
     college: clean(college),
     city: clean(city),
     organiser: { ...event.organiser.toObject(), location: clean(city), sub: clean(college) },
-    date: { ...event.date.toObject(), start: startDate, end: endDate },
+    eventDate,
+    registrationDeadline,
+    date: {
+      ...event.date.toObject(),
+      eventDate,
+      registrationDeadline,
+      start: eventDate,
+      end: registrationDeadline,
+    },
     venue: clean(venue),
     teamSize: clean(req.body.teamSize ?? event.teamSize),
     mode: clean(mode),
@@ -691,6 +723,10 @@ export const registerForEvent = asyncHandler(async (req, res) => {
   const event = await Event.findOne({ slug: req.params.slug, isActive: true });
   if (!event) return notFoundRes(res, 'Event not found');
 
+  if (isRegistrationClosed(event)) {
+    return fail(res, 'Registrations for this event are now closed.', 400);
+  }
+
   const existing = await Registration.findOne({ user: req.user._id, event: event._id });
   if (existing) return ok(res, { registration: existing }, 'Already registered');
 
@@ -769,7 +805,7 @@ export const cancelRegistration = asyncHandler(async (req, res) => {
 ──────────────────────────────────────────────────────── */
 export const hostEvent = asyncHandler(async (req, res) => {
   const {
-    eventName, college, eventType, startDate, endDate = '', city,
+    eventName, college, eventType, city,
     venue = '', teamSize = '', mode = 'Offline',
     hasPrize = false, prizeDetails = '',
     prize1 = '', prize2 = '', prize3 = '', totalPrize = '',
@@ -778,8 +814,19 @@ export const hostEvent = asyncHandler(async (req, res) => {
     pocName = '', pocPhone = '', pocEmail = '', website = '',
   } = req.body;
 
-  if (!eventName || !college || !eventType || !startDate || !city)
-    return fail(res, 'eventName, college, eventType, startDate and city are required');
+  const eventDate = req.body.eventDate || req.body.startDate;
+  const registrationDeadline = req.body.registrationDeadline || req.body.endDate || eventDate;
+
+  if (!eventName || !college || !eventType || !eventDate || !registrationDeadline || !city)
+    return fail(res, 'eventName, college, eventType, eventDate, registrationDeadline and city are required');
+
+  if (registrationDeadline && eventDate) {
+    const dDeadline = new Date(registrationDeadline);
+    const dEvent = new Date(eventDate);
+    if (!isNaN(dDeadline.getTime()) && !isNaN(dEvent.getTime()) && dDeadline > dEvent) {
+      return fail(res, 'Registration deadline cannot be after the event date.', 400);
+    }
+  }
 
   const files        = req.files || {};
   const bannerFile   = req.file || files.bannerImage?.[0];
@@ -809,7 +856,9 @@ export const hostEvent = asyncHandler(async (req, res) => {
   const hosted = await HostedEvent.create({
     submittedBy:  req.user._id,
     eventName: clean(eventName), college: clean(college), eventType: clean(eventType),
-    startDate, endDate, city: clean(city),
+    eventDate, registrationDeadline,
+    startDate: eventDate, endDate: registrationDeadline,
+    city: clean(city),
     venue: clean(venue), teamSize, mode,
     hasPrize:     hasPrize === 'true' || hasPrize === true,
     prizeDetails: clean(prizeDetails), prize1, prize2, prize3, totalPrize,

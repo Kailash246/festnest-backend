@@ -32,11 +32,16 @@ const eventSchema = new mongoose.Schema(
     college:  { type: String, required: true },
     city:     { type: String, required: true },
 
+    eventDate:            { type: String, default: '' },
+    registrationDeadline: { type: String, default: '' },
+
     date: {
-      start:    { type: String, required: true },  // human-readable, e.g. "18–19 May 2025"
-      end:      { type: String, default: '' },
-      time:     { type: String, default: '' },
-      deadlineDays: { type: Number, default: 0 },
+      eventDate:            { type: String, default: '' },
+      registrationDeadline: { type: String, default: '' },
+      start:                { type: String, default: '' },  // human-readable / fallback
+      end:                  { type: String, default: '' },
+      time:                 { type: String, default: '' },
+      deadlineDays:         { type: Number, default: 0 },
     },
 
     venue:    { type: String, default: '' },
@@ -122,5 +127,34 @@ eventSchema.index({ isFeatured: 1, featuredOrder: 1 });
 eventSchema.index({ isActive: 1, isApproved: 1, category: 1 });
 eventSchema.index({ isActive: 1, isApproved: 1, city: 1 });
 eventSchema.index({ college: 1 });
+
+// Guarantee eventDate & registrationDeadline are synced with legacy date fields
+eventSchema.pre('save', function (next) {
+  if (!this.eventDate && this.date?.eventDate) {
+    this.eventDate = this.date.eventDate;
+  }
+  if (!this.eventDate && this.date?.start) {
+    this.eventDate = this.date.start;
+  }
+  if (!this.registrationDeadline && this.date?.registrationDeadline) {
+    this.registrationDeadline = this.date.registrationDeadline;
+  }
+  if (!this.registrationDeadline && this.date?.end) {
+    this.registrationDeadline = this.date.end;
+  }
+  if (!this.registrationDeadline && this.eventDate) {
+    this.registrationDeadline = this.eventDate;
+  }
+
+  if (!this.date) {
+    this.date = {};
+  }
+  if (!this.date.eventDate && this.eventDate) this.date.eventDate = this.eventDate;
+  if (!this.date.registrationDeadline && this.registrationDeadline) this.date.registrationDeadline = this.registrationDeadline;
+  if (!this.date.start && this.eventDate) this.date.start = this.eventDate;
+  if (!this.date.end && this.registrationDeadline) this.date.end = this.registrationDeadline;
+
+  next();
+});
 
 export default mongoose.model('Event', eventSchema);

@@ -108,6 +108,19 @@ export const validateHostEvent = [
     .optional({ checkFalsy: true })
     .isURL(URL_OPTS)
     .withMessage('Registration link must be a valid URL (include https://)'),
+  body('registrationDeadline')
+    .optional({ checkFalsy: true })
+    .custom((deadline, { req }) => {
+      const eventDate = req.body.eventDate || req.body.startDate;
+      if (deadline && eventDate) {
+        const dDeadline = new Date(deadline);
+        const dEvent = new Date(eventDate);
+        if (!isNaN(dDeadline.getTime()) && !isNaN(dEvent.getTime()) && dDeadline > dEvent) {
+          throw new Error('Registration deadline cannot be after the event date.');
+        }
+      }
+      return true;
+    }),
 ];
 
 /* Live-event edits use the same field contract as the host form, but they
@@ -122,7 +135,30 @@ export const validateLiveEventUpdate = [
     .trim()
     .isIn(['Hackathon', 'Cultural Fest', 'Technical Fest', 'Workshop', 'Competition', 'Sports', 'Other', 'Mega Fest', 'Management', 'Startup', 'Tech Talk'])
     .withMessage('Please select a valid category'),
-  body('startDate').trim().notEmpty().withMessage('Start date is required'),
+  body('eventDate')
+    .custom((val, { req }) => {
+      const dateVal = val || req.body.startDate;
+      if (!dateVal || !String(dateVal).trim()) {
+        throw new Error('Event date is required');
+      }
+      return true;
+    }),
+  body('registrationDeadline')
+    .custom((val, { req }) => {
+      const deadlineVal = val || req.body.endDate || req.body.eventDate || req.body.startDate;
+      if (!deadlineVal || !String(deadlineVal).trim()) {
+        throw new Error('Registration deadline is required');
+      }
+      const eventDateVal = req.body.eventDate || req.body.startDate;
+      if (eventDateVal && deadlineVal) {
+        const dDeadline = new Date(deadlineVal);
+        const dEvent = new Date(eventDateVal);
+        if (!isNaN(dDeadline.getTime()) && !isNaN(dEvent.getTime()) && dDeadline > dEvent) {
+          throw new Error('Registration deadline cannot be after the event date.');
+        }
+      }
+      return true;
+    }),
   body('college')
     .trim()
     .notEmpty().withMessage('Organizer name is required')
